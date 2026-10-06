@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#14110e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="/manifest.webmanifest">
+<title>RE4 Inventory Link</title>
+<style>
+:root{
+  --bg:#14110e; --leather:#2a211a; --leather2:#1d1712; --stitch:#5a4632;
+  --felt:#1f2d2a; --felt2:#182421; --grid:rgba(160,200,180,.10);
+  --gold:#d6b46a; --gold2:#a8843f; --text:#efe6d6; --muted:#a3967f; --danger:#e0574a; --ok:#6fd08c; --warn:#e8b64c;
+  --t-weapon:#5b6f86; --t-ammo:#8a6b3c; --t-grenade:#6b7a3e; --t-heal:#3f7a52; --t-mod:#5d5a7e; --t-key:#8a4f4f; --t-other:#5b5246;
+  --radius:10px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body{padding:max(12px,env(safe-area-inset-top)) 12px calc(24px + env(safe-area-inset-bottom));min-height:100vh;
+  background:radial-gradient(120% 60% at 50% 0%,#2a2119 0%,var(--bg) 70%)}
+.wrap{max-width:980px;margin:0 auto}
+header{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+h1{font:700 18px/1 Georgia,"Times New Roman",serif;letter-spacing:.18em;margin:0;color:var(--gold);text-transform:uppercase}
+.badge{font-size:12px;padding:3px 8px;border-radius:99px;border:1px solid var(--stitch);color:var(--muted)}
+.status{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--danger);box-shadow:0 0 8px currentColor}
+.dot.run{background:var(--ok)} .dot.pause{background:var(--warn)}
+
+/* arma equipada */
+.equipped{display:flex;align-items:center;gap:14px;padding:12px 14px;margin-bottom:12px;border-radius:14px;
+  background:linear-gradient(180deg,#2c241c,#211a14);border:1px solid #3a2e22;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+.equipped .ico{width:84px;height:44px;flex:none;color:#cfd8e3}
+.equipped .nm{font-weight:600;font-size:16px}
+.equipped .sub{color:var(--muted);font-size:12px}
+.ammo{margin-left:auto;text-align:right;font-variant-numeric:tabular-nums}
+.ammo b{font:700 30px/1 Georgia,serif;color:var(--gold)}
+.ammo span{color:var(--muted);font-size:16px}
+.ammo small{display:block;color:var(--muted);font-size:11px;margin-top:3px}
+
+/* barra de troca rápida */
+.quick{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 10px;margin:0 -2px 6px;scrollbar-width:none}
+.quick::-webkit-scrollbar{display:none}
+.qw{flex:none;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:86px;padding:8px 10px;border-radius:12px;
+  background:#231c16;border:1px solid #3a2e22;color:var(--text);font-size:12px;cursor:pointer;transition:transform .08s,border-color .15s}
+.qw:active{transform:scale(.96)}
+.qw svg{width:64px;height:28px;color:#c9d2dc}
+.qw.on{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold) inset,0 0 16px rgba(214,180,106,.25)}
+.qw.busy{opacity:.55}
+.qw .a{color:var(--muted);font-variant-numeric:tabular-nums}
+
+/* maleta */
+.case{position:relative;padding:14px;border-radius:16px;background:linear-gradient(180deg,var(--leather),var(--leather2));
+  border:1px solid #3d3024;box-shadow:0 10px 30px rgba(0,0,0,.5),inset 0 0 0 4px #251d16,inset 0 0 0 5px var(--stitch)}
+.case-top{display:flex;align-items:center;justify-content:space-between;margin:0 2px 10px;color:var(--muted);font-size:12px}
+.case-top button{font:inherit}
+.board{position:relative;width:100%;border-radius:6px;overflow:hidden;touch-action:pan-y;
+  background:
+    linear-gradient(var(--grid) 1px,transparent 1px) 0 0/calc(100%/var(--w)) calc(100%/var(--h)),
+    linear-gradient(90deg,var(--grid) 1px,transparent 1px) 0 0/calc(100%/var(--w)) calc(100%/var(--h)),
+    radial-gradient(120% 120% at 50% 40%,var(--felt),var(--felt2));
+  box-shadow:inset 0 2px 10px rgba(0,0,0,.6);aspect-ratio:var(--w)/var(--h)}
+.board.arrange{touch-action:none;outline:2px dashed rgba(214,180,106,.5);outline-offset:3px}
+.item{position:absolute;padding:2px;transition:left .18s,top .18s,width .18s,height .18s}
+.item .in{position:relative;width:100%;height:100%;border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(160deg,color-mix(in srgb,var(--c) 85%,#fff 15%),var(--c));border:1px solid rgba(255,255,255,.12);
+  box-shadow:0 2px 6px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.15)}
+.item svg.g{width:86%;height:70%;color:rgba(255,255,255,.88);filter:drop-shadow(0 1px 1px rgba(0,0,0,.5))}
+.item.rot svg.g{transform:rotate(90deg);width:70%;height:86%}
+.item .lbl{position:absolute;left:4px;right:4px;top:2px;font-size:clamp(8px,1.6vw,11px);color:rgba(255,255,255,.85);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px #000}
+.item .cnt{position:absolute;right:4px;bottom:2px;font:700 clamp(10px,2.2vw,14px)/1 system-ui;color:#fff;text-shadow:0 1px 2px #000,0 0 4px #000;font-variant-numeric:tabular-nums}
+.item.eq .in{box-shadow:0 0 0 2px var(--gold),0 0 18px rgba(214,180,106,.55)}
+.item.eq .in::after{content:"EQUIPADA";position:absolute;left:4px;bottom:2px;font:700 8px/1 system-ui;letter-spacing:.08em;color:var(--gold);text-shadow:0 1px 2px #000}
+.item.sel .in{outline:2px solid #fff;outline-offset:-2px}
+.item.drag{z-index:5;opacity:.9;transition:none}
+.ghost{position:absolute;border-radius:6px;border:2px solid var(--ok);background:rgba(111,208,140,.15);pointer-events:none;z-index:4}
+.ghost.bad{border-color:var(--danger);background:rgba(224,87,74,.18)}
+.hint{color:var(--muted);font-size:12px;margin:8px 2px 0}
+
+.btn{appearance:none;border:1px solid #4a3a2a;background:#2b2219;color:var(--text);border-radius:10px;padding:9px 14px;font-weight:600;cursor:pointer}
+.btn:active{transform:scale(.97)}
+.btn.gold{background:linear-gradient(180deg,var(--gold),var(--gold2));color:#1b140c;border-color:#e2c584}
+.btn.sm{padding:6px 10px;font-size:12px}
+.btn.on{border-color:var(--gold);color:var(--gold)}
+
+/* outros itens */
+.sect{margin-top:18px}
+.sect h2{font:600 12px/1 system-ui;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 8px 2px}
+.list{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.li{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#1f1913;border:1px solid #33281e;border-radius:10px;font-size:13px}
+.li svg{width:22px;height:22px;flex:none;color:var(--gold)}
+.li .q{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums}
+
+/* folha de detalhes */
+.sheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:opacity .2s;z-index:20}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:21;max-width:640px;margin:0 auto;padding:16px 16px calc(18px + env(safe-area-inset-bottom));
+  background:#221b15;border-top:1px solid #4a3a2a;border-radius:18px 18px 0 0;transform:translateY(105%);transition:transform .22s ease}
+.sheet.open{transform:none} .sheet-bg.open{opacity:1;pointer-events:auto}
+.sheet .grab{width:40px;height:4px;border-radius:4px;background:#4a3a2a;margin:-6px auto 12px}
+.sheet h3{margin:0;font-size:18px} .sheet .ty{color:var(--muted);font-size:12px;margin:2px 0 12px}
+.row{display:flex;align-items:center;gap:10px;margin:10px 0}
+.row label{color:var(--muted);font-size:13px;min-width:92px}
+.step{display:flex;align-items:center;border:1px solid #4a3a2a;border-radius:10px;overflow:hidden}
+.step button{width:42px;height:38px;background:#2b2219;color:var(--text);border:0;font-size:20px}
+.step input{width:64px;height:38px;text-align:center;background:#16120e;color:var(--text);border:0;font:600 16px system-ui;font-variant-numeric:tabular-nums}
+.step .mx{padding:0 10px;color:var(--muted);font-size:13px}
+.pips{display:flex;gap:3px}.pips i{width:12px;height:12px;border-radius:3px;background:#3a2e22}.pips i.f{background:var(--gold)}
+.actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}.actions .btn{flex:1}
+
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translate(-50%,40px);opacity:0;z-index:40;
+  background:#2b2219;border:1px solid #4a3a2a;color:var(--text);padding:10px 14px;border-radius:12px;font-size:14px;transition:.2s;max-width:90vw;text-align:center}
+.toast.show{opacity:1;transform:translate(-50%,0)} .toast.err{border-color:var(--danger)}
+.offline{text-align:center;padding:40px 16px;color:var(--muted)}
+.offline b{display:block;color:var(--text);font-size:17px;margin-bottom:6px}
+.pausebar{display:none;margin:-4px 0 12px;padding:8px 12px;border-radius:10px;background:rgba(232,182,76,.12);border:1px solid rgba(232,182,76,.35);color:var(--warn);font-size:13px}
+.pausebar.show{display:block}
+@media (min-width:760px){ .layout{display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:start} .sect{margin-top:0} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Inventário</h1>
+    <span class="badge" id="caseBadge">—</span>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusTxt">conectando…</span></div>
+  </header>
+  <div class="pausebar" id="pausebar">Jogo pausado (janela do RE4 sem foco). Trocas de arma serão aplicadas quando o jogo voltar.</div>
+  <div id="app"><div class="offline"><b>Conectando ao jogo…</b>Abra o Resident Evil 4 no PC.</div></div>
+</div>
+
+<div class="sheet-bg" id="sheetBg"></div>
+<div class="sheet" id="sheet"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ---------- ícones (silhuetas simples, desenhadas em viewBox 100x40 / 40x40) ----------
+const ICONS = {
+  pistol:'<svg class="g" viewBox="0 0 100 50" fill="currentColor"><path d="M8 10h70l4-4h6v4h4v12H62l-3 4h-9l-4 18H30l6-22h-6l-4-4H8z"/><rect x="50" y="22" width="9" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="3"/></svg>',
+  magnum:'<svg class="g" viewBox="0 0 100 50" fill="currentColor"><path d="M4 12h66l2-3h5v3h6v10H64l-2 2-1 6h-8l-4 16H32l5-20h-6l-3-5H4z"/><circle cx="54" cy="17" r="6"/></svg>',
+  long:'<svg class="g" viewBox="0 0 200 40" preserveAspectRatio="xMidYMid meet" fill="currentColor"><path d="M2 14h120l4-4h10v4h60v6h-60v4h-38l-6 4h-8l-6 12h-14l4-12h-6l-10 10H18L8 24H2z"/></svg>',
+  smg:'<svg class="g" viewBox="0 0 120 50" fill="currentColor"><path d="M4 14h80l4-4h8v4h20v6H96v4H72l-2 22H58l2-22h-8l-6 14H34l4-14h-6l-6-6H4z"/></svg>',
+  knife:'<svg class="g" viewBox="0 0 40 100" fill="currentColor"><path d="M20 2c8 10 10 30 8 56H12C10 32 12 12 20 2z"/><rect x="8" y="58" width="24" height="5" rx="2"/><rect x="14" y="63" width="12" height="34" rx="4"/></svg>',
+  ammo:'<svg class="g" viewBox="0 0 80 40" fill="currentColor"><rect x="4" y="10" width="72" height="26" rx="3"/><path d="M14 10V4h6v6m6 0V4h6v6m6 0V4h6v6m6 0V4h6v6" stroke="currentColor" stroke-width="2" fill="none"/><rect x="12" y="18" width="56" height="6" rx="2" fill="rgba(0,0,0,.25)"/></svg>',
+  grenade:'<svg class="g" viewBox="0 0 40 70" fill="currentColor"><rect x="14" y="4" width="12" height="10" rx="2"/><path d="M26 8h8v4h-8"/><ellipse cx="20" cy="42" rx="16" ry="24"/></svg>',
+  herb:'<svg class="g" viewBox="0 0 40 70" fill="currentColor"><path d="M6 30h28l-4 36H10z"/><path d="M20 30c-2-10-10-18-16-20 6 8 8 14 10 20zm0 0c2-14 8-24 16-26-4 8-8 16-10 26z"/></svg>',
+  spray:'<svg class="g" viewBox="0 0 40 80" fill="currentColor"><rect x="8" y="22" width="24" height="54" rx="5"/><rect x="13" y="10" width="14" height="12" rx="2"/><path d="M27 12h9v5h-9z"/><rect x="12" y="36" width="16" height="12" fill="rgba(0,0,0,.25)"/></svg>',
+  egg:'<svg class="g" viewBox="0 0 40 50" fill="currentColor"><ellipse cx="20" cy="27" rx="15" ry="20"/></svg>',
+  fish:'<svg class="g" viewBox="0 0 100 40" fill="currentColor"><path d="M4 20c14-14 46-16 66-4l16-10v28l-16-10C50 36 18 34 4 20z"/></svg>',
+  scope:'<svg class="g" viewBox="0 0 100 40" fill="currentColor"><rect x="10" y="14" width="80" height="12" rx="6"/><rect x="4" y="10" width="18" height="20" rx="5"/><rect x="78" y="10" width="18" height="20" rx="5"/></svg>',
+  stock:'<svg class="g" viewBox="0 0 100 40" fill="currentColor"><path d="M4 12h50l40 10v12H60L4 24z"/></svg>',
+  box:'<svg class="g" viewBox="0 0 40 40" fill="currentColor"><rect x="6" y="10" width="28" height="24" rx="3"/><path d="M6 16h28" stroke="rgba(0,0,0,.3)" stroke-width="2"/></svg>',
+  gem:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 3h12l4 6-10 12L2 9z"/></svg>',
+  file:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 2h10l4 4v16H5z"/></svg>',
+  key:'<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="7" cy="12" r="5"/><path d="M11 11h11v3h-2v3h-3v-3h-6z"/></svg>',
+  case:'<svg viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M8 7V4h8v3" stroke="currentColor" stroke-width="2" fill="none"/></svg>',
+};
+const PISTOLS=new Set([3,33,35,37,38,39,41,42,64]), MAGNUMS=new Set([42,55]), SMGS=new Set([48,50,52,62,83]);
+const HERBS=new Set([6,18,19,20,21,22,25,28,168]), EGGS=new Set([8,9,10]), FISH=new Set([149,151]);
+const SCOPES=new Set([34,68,69,170,197]), STOCKS=new Set([66,67]), GRENADES=new Set([1,2,14]);
+// arma -> munição de reserva
+const AMMO_FOR={3:4,33:4,35:4,37:4,38:4,39:4,64:4,41:4,44:24,45:24,148:24,46:7,47:7,107:7,108:7,81:7,153:7,48:32,50:32,52:106,42:0,55:0,54:70,171:70,16:17,82:114};
+
+function iconFor(it){
+  const id=it.id;
+  if(it.type===1){
+    if(id===56||id===13) return ICONS.knife;
+    if(MAGNUMS.has(id)) return ICONS.magnum;
+    if(PISTOLS.has(id)) return ICONS.pistol;
+    if(SMGS.has(id)) return ICONS.smg;
+    return ICONS.long;
+  }
+  if(it.type===2) return ICONS.ammo;
+  if(GRENADES.has(id)||it.type===3) return ICONS.grenade;
+  if(HERBS.has(id)) return ICONS.herb;
+  if(id===5) return ICONS.spray;
+  if(EGGS.has(id)) return ICONS.egg;
+  if(FISH.has(id)) return ICONS.fish;
+  if(SCOPES.has(id)) return ICONS.scope;
+  if(STOCKS.has(id)) return ICONS.stock;
+  return ICONS.box;
+}
+function colorFor(it){
+  if(it.type===1) return 'var(--t-weapon)';
+  if(it.type===2) return 'var(--t-ammo)';
+  if(it.type===3||GRENADES.has(it.id)) return 'var(--t-grenade)';
+  if(it.type===6) return 'var(--t-heal)';
+  if(it.type===9) return 'var(--t-mod)';
+  if(it.type===14||it.type===7) return 'var(--t-key)';
+  return 'var(--t-other)';
+}
+const TYPE_LABEL={1:'Arma',2:'Munição',3:'Granada',5:'Tesouro',6:'Recuperação',7:'Item-chave',8:'Bônus',9:'Acessório',10:'Arquivo',11:'Mapa / Maleta',12:'Gema',13:'Tampinha',14:'Importante'};
+
+// ---------- estado ----------
+let S=null, selected=null, arrange=false, busyEquip=null;
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function api(path,body){
+  const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json().catch(()=>({ok:false,error:'Resposta inválida'}));
+  if(!j.ok) throw new Error(j.error||'Erro');
+  return j;
+}
+function toast(msg,err){const t=$('#toast');t.textContent=msg;t.className='toast show'+(err?' err':'');clearTimeout(t._h);t._h=setTimeout(()=>t.className='toast',2200)}
+function buzz(ms=15){try{navigator.vibrate&&navigator.vibrate(ms)}catch(e){}}
+
+async function equip(slot){
+  if(busyEquip!==null) return;
+  busyEquip=slot; render(); buzz(20);
+  try{const j=await api('/api/equip',{slot}); if(j.pending) toast('Troca agendada — volte ao jogo');}
+  catch(e){toast(e.message,true)}
+  finally{busyEquip=null; render()}
+}
+
+function reserve(st,wid){
+  const a=AMMO_FOR[wid]; if(a===undefined) return null;
+  return [...st.items,...st.others].filter(i=>i.id===a).reduce((s,i)=>s+i.num,0);
+}
+
+// ---------- render ----------
+function render(){
+  const st=S, app=$('#app');
+  const dot=$('#dot'), txt=$('#statusTxt');
+  if(!st||!st.connected){
+    dot.className='dot'; txt.textContent='desconectado'; $('#caseBadge').textContent='—'; $('#pausebar').classList.remove('show');
+    app.innerHTML=`<div class="offline"><b>Jogo não conectado</b>${esc(st&&st.error||'Abra o Resident Evil 4 no PC.')}</div>`;
+    return;
+  }
+  dot.className='dot '+(st.running?'run':'pause'); txt.textContent=st.running?'ao vivo':'pausado';
+  $('#pausebar').classList.toggle('show',!st.running);
+  $('#caseBadge').textContent=`Maleta ${st.caseName} · ${st.caseW}×${st.caseH}`;
+
+  const all=[...st.items,...st.others];
+  const eq=all.find(i=>i.equipped);
+  const weapons=st.items.filter(i=>i.type===1).sort((a,b)=>a.y-b.y||a.x-b.x);
+  if(selected!==null && !all.some(i=>i.slot===selected)) closeSheet();
+
+  let h='';
+  if(eq){
+    const r=reserve(st,eq.id);
+    h+=`<div class="equipped"><div class="ico">${iconFor(eq)}</div><div><div class="nm">${esc(eq.name)}</div>
+      <div class="sub">Arma equipada</div></div>
+      <div class="ammo">${eq.ammoMax===1&&eq.id===56?'<b>—</b>':`<b>${eq.ammo}</b><span> / ${eq.ammoMax??'?'}</span>`}
+      ${r!==null?`<small>reserva: ${r}</small>`:''}</div></div>`;
+  }
+  h+=`<div class="quick">${weapons.map(w=>`<button class="qw ${w.equipped?'on':''} ${busyEquip===w.slot?'busy':''}" data-equip="${w.slot}">
+      ${iconFor(w).replace('class="g"','')}<span>${esc(w.name)}</span><span class="a">${w.id===56?'∞':w.ammo+'/'+(w.ammoMax??'?')}</span></button>`).join('')}</div>`;
+
+  h+=`<div class="layout"><div><div class="case"><div class="case-top"><span>Toque: detalhes · Toque duplo em arma: equipar</span>
+      <button class="btn sm ${arrange?'on':''}" id="arrBtn">${arrange?'✓ Organizando':'Organizar'}</button></div>
+      <div class="board ${arrange?'arrange':''}" id="board" style="--w:${st.caseW};--h:${st.caseH}">`;
+  for(const it of st.items){
+    const cnt = it.type===1 ? (it.id===56?'':it.ammo) : (it.num>1||it.type===2?it.num:'');
+    h+=`<div class="item ${it.equipped?'eq':''} ${selected===it.slot?'sel':''} ${(it.rot&1)?'rot':''}" data-slot="${it.slot}"
+        style="left:${it.x/st.caseW*100}%;top:${it.y/st.caseH*100}%;width:${it.w/st.caseW*100}%;height:${it.h/st.caseH*100}%;--c:${colorFor(it)}">
+        <div class="in">${iconFor(it)}${it.h>1&&it.w>1?`<span class="lbl">${esc(it.name)}</span>`:''}<span class="cnt">${cnt}</span></div></div>`;
+  }
+  h+=`</div>${arrange?'<div class="hint">Arraste os itens para reposicionar. Abra o inventário no jogo depois para ver a nova organização.</div>':''}</div></div>`;
+
+  const groups={};
+  for(const o of st.others){
+    const g = o.type===5||o.type===12||o.type===13?'Tesouros':o.type===10?'Arquivos':o.type===11?'Mapas e maleta':'Itens-chave e outros';
+    (groups[g]=groups[g]||[]).push(o);
+  }
+  h+='<div>';
+  for(const [g,list] of Object.entries(groups)){
+    const ic=g==='Tesouros'?ICONS.gem:g==='Arquivos'?ICONS.file:g==='Mapas e maleta'?ICONS.case:ICONS.key;
+    h+=`<div class="sect"><h2>${g}</h2><div class="list">${list.map(o=>`<div class="li" data-slot="${o.slot}">${ic}<span>${esc(o.name)}</span>${o.num>1?`<span class="q">×${o.num}</span>`:''}</div>`).join('')}</div></div>`;
+  }
+  h+='</div></div>';
+  app.innerHTML=h;
+  if(selected!==null) renderSheet();
+}
+
+// ---------- folha de detalhes ----------
+function findItem(slot){return S&&[...S.items,...S.others].find(i=>i.slot===slot)}
+function openSheet(slot){selected=slot;renderSheet();$('#sheet').classList.add('open');$('#sheetBg').classList.add('open');render()}
+function closeSheet(){selected=null;$('#sheet').classList.remove('open');$('#sheetBg').classList.remove('open');if(S)render()}
+function pips(n,max=5){return `<span class="pips">${Array.from({length:max},(_,i)=>`<i class="${i<n?'f':''}"></i>`).join('')}</span>`}
+
+function renderSheet(){
+  const it=findItem(selected); if(!it) return;
+  const sh=$('#sheet'); const active=document.activeElement&&sh.contains(document.activeElement)&&document.activeElement.tagName==='INPUT';
+  if(active) return; // não sobrescreve enquanto o usuário digita
+  let h=`<div class="grab"></div><h3>${esc(it.name)}</h3><div class="ty">${TYPE_LABEL[it.type]||'Item'}${it.w?` · ${it.w}×${it.h} · posição (${it.x+1}, ${it.y+1})`:''}</div>`;
+  if(it.type===1){
+    if(it.id!==56) h+=`<div class="row"><label>Munição</label><div class="step"><button data-amm="-1">−</button><input id="ammIn" type="number" inputmode="numeric" value="${it.ammo}"><button data-amm="1">+</button><span class="mx">/ ${it.ammoMax??'?'}</span></div></div>`;
+    h+=`<div class="row"><label>Poder</label>${pips(it.firepower)}</div><div class="row"><label>Cadência</label>${pips(it.firingSpeed)}</div>
+        <div class="row"><label>Recarga</label>${pips(it.reloadSpeed)}</div><div class="row"><label>Capacidade</label>${pips(it.capacity)}</div>`;
+  } else if(it.max>1){
+    h+=`<div class="row"><label>Quantidade</label><div class="step"><button data-cnt="-1">−</button><input id="cntIn" type="number" inputmode="numeric" value="${it.num}"><button data-cnt="1">+</button><span class="mx">máx ${it.max}</span></div></div>`;
+  } else if(it.num>1){
+    h+=`<div class="row"><label>Quantidade</label><b>${it.num}</b></div>`;
+  }
+  h+='<div class="actions">';
+  if(it.type===1) h+= it.equipped?`<button class="btn" disabled>Equipada</button>`:`<button class="btn gold" data-equip="${it.slot}">Equipar</button>`;
+  if(it.w && it.w!==it.h) h+=`<button class="btn" id="rotBtn">Girar</button>`;
+  h+=`<button class="btn" id="closeBtn">Fechar</button></div>`;
+  sh.innerHTML=h;
+}
+
+let numTimer=null;
+function queueNumber(kind,val){
+  clearTimeout(numTimer);
+  numTimer=setTimeout(async()=>{
+    try{ await api(kind==='amm'?'/api/ammo':'/api/count', kind==='amm'?{slot:selected,ammo:val}:{slot:selected,num:val}); }
+    catch(e){toast(e.message,true)}
+  },250);
+}
+
+document.addEventListener('click',e=>{
+  const eqb=e.target.closest('[data-equip]'); if(eqb){equip(+eqb.dataset.equip);return}
+  if(e.target.closest('#arrBtn')){arrange=!arrange;render();return}
+  if(e.target.closest('#closeBtn')||e.target.id==='sheetBg'){closeSheet();return}
+  if(e.target.closest('#rotBtn')){
+    const it=findItem(selected); const nr=it.rot^1; const nw=it.h, nh=it.w;
+    // tenta girar no lugar; se não couber, procura o primeiro espaço livre
+    const spots=[[it.x,it.y],...freeSpots(it.slot,nw,nh)];
+    (async()=>{for(const [x,y] of spots){try{await api('/api/move',{slot:it.slot,x,y,rot:nr});buzz();return}catch(err){}}toast('Sem espaço para girar',true)})();
+    return;
+  }
+  const st=e.target.closest('[data-amm],[data-cnt]');
+  if(st){const kind=st.dataset.amm?'amm':'cnt'; const inp=$(kind==='amm'?'#ammIn':'#cntIn'); const it=findItem(selected);
+    const mx=kind==='amm'?(it.ammoMax??999):it.max; let v=Math.max(kind==='amm'?0:1,Math.min(mx,(+inp.value||0)+(+st.dataset[kind])));
+    inp.value=v; queueNumber(kind,v); buzz(8); return}
+  const li=e.target.closest('.li[data-slot]'); if(li){openSheet(+li.dataset.slot);return}
+});
+document.addEventListener('input',e=>{
+  if(e.target.id==='ammIn') queueNumber('amm',+e.target.value||0);
+  if(e.target.id==='cntIn') queueNumber('cnt',+e.target.value||1);
+});
+
+function occupied(exceptSlot){
+  const occ=new Set();
+  for(const o of S.items) if(o.slot!==exceptSlot) for(let i=0;i<o.w;i++) for(let j=0;j<o.h;j++) occ.add((o.x+i)+','+(o.y+j));
+  return occ;
+}
+function fits(occ,x,y,w,h){
+  if(x<0||y<0||x+w>S.caseW||y+h>S.caseH) return false;
+  for(let i=0;i<w;i++) for(let j=0;j<h;j++) if(occ.has((x+i)+','+(y+j))) return false;
+  return true;
+}
+function freeSpots(slot,w,h){const occ=occupied(slot),r=[];for(let y=0;y<S.caseH;y++)for(let x=0;x<S.caseW;x++)if(fits(occ,x,y,w,h))r.push([x,y]);return r}
+
+// ---------- toque / arrastar ----------
+let drag=null, lastTap={slot:null,t:0}, skipUp=false;
+document.addEventListener('pointerdown',e=>{
+  const el=e.target.closest('.item'); if(!el) return;
+  const slot=+el.dataset.slot, it=findItem(slot), board=$('#board');
+  if(!arrange){
+    const now=Date.now();
+    if(lastTap.slot===slot && now-lastTap.t<320 && it.type===1){ equip(slot); lastTap={slot:null,t:0}; skipUp=true; return; }
+    lastTap={slot,t:now};
+    return;
+  }
+  e.preventDefault();
+  const r=board.getBoundingClientRect(), cw=r.width/S.caseW, ch=r.height/S.caseH;
+  const er=el.getBoundingClientRect();
+  drag={el,it,board,r,cw,ch,ox:e.clientX-er.left,oy:e.clientY-er.top,moved:false,occ:occupied(slot),ghost:null,x:it.x,y:it.y};
+  el.setPointerCapture(e.pointerId);
+});
+document.addEventListener('pointermove',e=>{
+  if(!drag) return;
+  const d=drag, px=e.clientX-d.r.left-d.ox, py=e.clientY-d.r.top-d.oy;
+  if(!d.moved && Math.hypot(px-d.it.x*d.cw,py-d.it.y*d.ch)<6) return;
+  if(!d.moved){d.moved=true;d.el.classList.add('drag');d.ghost=document.createElement('div');d.ghost.className='ghost';d.board.appendChild(d.ghost);buzz(10)}
+  d.el.style.left=px+'px'; d.el.style.top=py+'px';
+  d.x=Math.round(px/d.cw); d.y=Math.round(py/d.ch);
+  const ok=fits(d.occ,d.x,d.y,d.it.w,d.it.h); d.ok=ok;
+  Object.assign(d.ghost.style,{left:d.x*d.cw+'px',top:d.y*d.ch+'px',width:d.it.w*d.cw+'px',height:d.it.h*d.ch+'px'});
+  d.ghost.className='ghost'+(ok?'':' bad');
+});
+document.addEventListener('pointerup',async e=>{
+  if(!drag){ if(skipUp){skipUp=false;return} const el=e.target.closest('.item'); if(el && !arrange) openSheet(+el.dataset.slot); return; }
+  const d=drag; drag=null;
+  if(!d.moved){ openSheet(d.it.slot); return; }
+  d.ghost&&d.ghost.remove();
+  if(d.ok && (d.x!==d.it.x||d.y!==d.it.y)){
+    try{await api('/api/move',{slot:d.it.slot,x:d.x,y:d.y,rot:d.it.rot});buzz()}catch(err){toast(err.message,true);render()}
+  } else render();
+});
+document.addEventListener('pointercancel',()=>{if(drag){drag.ghost&&drag.ghost.remove();drag=null;render()}});
+
+// ---------- conexão ao vivo (SSE com fallback para polling) ----------
+function onState(st){
+  if(drag) { S=st; return; }       // não re-renderiza no meio do arraste
+  S=st; render();
+}
+function connect(){
+  const es=new EventSource('/api/events');
+  es.onmessage=ev=>{try{onState(JSON.parse(ev.data))}catch(e){}};
+  es.onerror=()=>{es.close();$('#dot').className='dot';$('#statusTxt').textContent='reconectando…';setTimeout(connect,1500)};
+}
+connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "name": "RE4 Inventory Link",
+  "short_name": "RE4 Inventário",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#14110e",
+  "theme_color": "#14110e"
+}
