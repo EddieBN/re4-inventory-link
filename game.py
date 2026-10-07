@@ -428,21 +428,6 @@ class Game:
                 "lifeColor0": [round(v) for v in c0], "lifeColor1": [round(v) for v in c1],
                 "invOpen": bool(self.p.u32(self.sub_screen + 0x2C) & 1)}
 
-    def case_board(self):
-        """(nível, matriz 3x4 da maleta) enquanto a maleta está aberta no jogo, senão None."""
-        with self.lock:
-            if not self.p.u32(self.sub_screen + 0x2C) & 1:          # SS_OPEN_NORMAL
-                return None
-            pz = self.p.u32(self.sub_screen + 0x2AC)
-            board = self.p.u32(pz) if pz else 0
-            if not board or self.p.u32(pz + 0x30) != board:
-                return None
-            b = self.p.read(board, 0x40)
-            level = self.case_level()
-            if (b[4], b[5]) != CASE_SIZES[level]:
-                return None
-            return level, [round(v, 4) for v in struct.unpack_from("<12f", b, 0x0C)]
-
     def _mgr_call(self, fn, arg, timeout=1.5):
         return self._exec(CMD_MGR_CALL, arg, 0, fn, timeout=timeout)
 

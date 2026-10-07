@@ -19,16 +19,10 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:var(
   padding:calc(6px + env(safe-area-inset-top)) 8px 6px;font:13px system-ui,sans-serif;color:#aaa}
 #bar .dot{width:9px;height:9px;border-radius:50%;background:#c0392b}#bar .dot.run{background:#2ecc71}#bar .dot.pause{background:#e5b335}
 #bar .sp{flex:1}
-.seg{display:inline-flex;border:1px solid #57554a}
-.seg button,#bar>button{font:italic 15px var(--serif);color:var(--ink);background:rgba(30,30,26,.9);border:0;padding:5px 10px;cursor:pointer}
-.seg button+button{border-left:1px solid #57554a}
-.seg button.on{background:linear-gradient(180deg,#6b6646,#3b3826);color:#fff}
-.seg button.game::after{content:"•";margin-left:3px;color:#e5d27a}
-#bar>button{border:1px solid #57554a}
+#bar>button{font:italic 15px var(--serif);color:var(--ink);background:rgba(30,30,26,.9);border:1px solid #57554a;padding:5px 10px;cursor:pointer}
 #stage-wrap{position:fixed;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center}
 .win{position:relative;overflow:hidden;background:#000}
 .stage{position:absolute;left:0;top:0;transform-origin:0 0}
-.stage>img.bg{position:absolute;left:0;top:0;pointer-events:none}
 .synthetic{position:absolute;border-radius:14px;background:linear-gradient(180deg,#9c9a90,#5b5a54);box-shadow:inset 0 0 0 10px #3a3935,0 10px 40px #000}
 .felt{position:absolute;background:
   repeating-linear-gradient(90deg,rgba(190,190,180,.18) 0 1px,transparent 1px var(--c)),
@@ -82,7 +76,6 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:var(
 <div id="bar">
   <span class="dot" id="dot"></span><span id="stx">conectando…</span>
   <span class="sp"></span>
-  <span class="seg" id="sizes"></span>
   <button id="othersBtn">Keys / Treasures</button>
 </div>
 <div id="stage-wrap"><div class="win" id="win"><div class="stage" id="stage"></div></div></div>
@@ -93,16 +86,13 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:var(
 // ======================================================================
 //  Estado
 // ======================================================================
-let S=null, C=null, cLoading=false;
-let preview='auto';        // 'auto' = segue o tamanho da maleta no jogo; ou 0..3
+let S=null, ICONS={};
 let sel=null, menu=null, drag=null, modal=null;
 const PX=96;               // pixels por célula no sistema local de cada item
-const SYN=96;              // tamanho da célula na maleta desenhada (quando não há imagem)
+const SYN=96;              // tamanho da célula na maleta desenhada
 const KNIFE=new Set([13,56]);
-const NAMES=['S','M','L','XL'];
 const $=q=>document.querySelector(q);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-try{ const p=localStorage.getItem('re4-case-preview'); if(p!==null) preview=p==='auto'?'auto':+p; }catch(e){}
 
 // ---------------------------------------------------------- matrizes 3x3
 const mul=(A,B)=>A.map(r=>[0,1,2].map(j=>r[0]*B[0][j]+r[1]*B[1][j]+r[2]*B[2][j]));
@@ -114,54 +104,29 @@ const cellT=(x,y)=>[[1/PX,0,x],[0,1/PX,y],[0,0,1]];
 // ======================================================================
 //  Geometria da maleta exibida
 // ======================================================================
-function shownLevel(){ return preview==='auto'?S.caseLevel:preview }
-function isPreview(){ return preview!=='auto' && preview!==S.caseLevel }
 function geometry(){
-  const lvl=shownLevel(), c=C.cases[lvl], [W,Hc]=c.size;
-  if(c.image&&c.H){
-    const M=c.H, pts=[[0,0],[W,0],[0,Hc],[W,Hc]].map(p=>ap(M,...p));
-    const x0=Math.min(...pts.map(p=>p[0])),x1=Math.max(...pts.map(p=>p[0])),y0=Math.min(...pts.map(p=>p[1])),y1=Math.max(...pts.map(p=>p[1]));
-    const cw=(x1-x0)/W, ch=(y1-y0)/Hc;
-    // recorte: só a maleta (tampa em cima, alça embaixo)
-    const x=Math.max(0,x0-cw*1.05), y=Math.max(0,y0-ch*2.0);
-    const crop={x,y,w:Math.min(c.image.w,x1+cw*1.05)-x,h:Math.min(c.image.h,y1+ch*2.0)-y};
-    return {lvl,W,Hc,M,crop,image:c.image,synthetic:false};
-  }
-  // sem screenshot (ou ainda sem calibração) para esse tamanho: maleta desenhada
-  const pad=SYN*0.6, w=W*SYN+pad*2, h=Hc*SYN+pad*2;
-  return {lvl,W,Hc,M:[[SYN,0,pad],[0,SYN,pad],[0,0,1]],crop:{x:0,y:0,w,h},image:null,synthetic:true,
-          missing:c.image?'calib':'image'};
+  // maleta desenhada no tamanho atual do inventário do jogo (S 10×6, M 11×7, L 12×8, XL 15×8)
+  const W=S.caseW, Hc=S.caseH, pad=SYN*0.6;
+  return {W,Hc,M:[[SYN,0,pad],[0,SYN,pad],[0,0,1]],crop:{x:0,y:0,w:W*SYN+pad*2,h:Hc*SYN+pad*2}};
 }
 
 // ======================================================================
 //  Render
 // ======================================================================
-async function loadCases(){
-  if(cLoading) return; cLoading=true;
-  try{ C=await (await fetch('/api/cases')).json(); }catch(e){}
-  cLoading=false; render();
+async function loadIcons(){
+  try{ ICONS=await (await fetch('/api/icons')).json(); if(S) render(); }catch(e){}
 }
 function renderBar(){
   const dot=$('#dot'), stx=$('#stx');
   if(!S||!S.connected){ dot.className='dot'; stx.textContent='desconectado'; }
   else { dot.className='dot '+(S.running?'run':'pause'); stx.textContent=S.running?'ao vivo':'pausado'; }
-  const g=S&&S.connected?S.caseLevel:-1;
-  $('#sizes').innerHTML=`<button data-p="auto" class="${preview==='auto'?'on':''}">Auto</button>`+
-    NAMES.map((n,i)=>`<button data-p="${i}" class="${preview===i?'on':''} ${g===i?'game':''}">${n}</button>`).join('');
 }
-$('#sizes').addEventListener('click',e=>{
-  const b=e.target.closest('[data-p]'); if(!b) return;
-  preview=b.dataset.p==='auto'?'auto':+b.dataset.p;
-  try{localStorage.setItem('re4-case-preview',String(preview))}catch(err){}
-  sel=null; closeMenu(); render();
-});
 
 let G=null;
 function render(){
   renderBar();
   const stage=$('#stage'), banner=$('#banner');
   if(!S||!S.connected){ stage.innerHTML=''; G=null; banner.hidden=false; banner.textContent=(S&&S.error)||'Abra o Resident Evil 4 no PC.'; return; }
-  if(!C||C.version!==S.casesVersion){ loadCases(); if(!C) return; }
   G=geometry();
   const top=$('#bar').getBoundingClientRect().height;
   $('#stage-wrap').style.top=top+'px';
@@ -170,29 +135,19 @@ function render(){
   G.s=s;
   stage.style.transform=`scale(${s}) translate(${-G.crop.x}px,${-G.crop.y}px)`;
   let h='';
-  if(G.synthetic){
-    const pad=SYN*0.6;
-    h+=`<div class="synthetic" style="left:${pad*0.35}px;top:${pad*0.35}px;width:${G.crop.w-pad*0.7}px;height:${G.crop.h-pad*0.7}px"></div>`;
-    h+=`<div class="felt" style="--c:${SYN}px;left:${pad}px;top:${pad}px;width:${G.W*SYN}px;height:${G.Hc*SYN}px"></div>`;
-  } else {
-    h+=`<img class="bg" src="${G.image.url}" style="width:${G.image.w}px;height:${G.image.h}px" draggable="false">`;
-  }
+  const pad=SYN*0.6;
+  h+=`<div class="synthetic" style="left:${pad*0.35}px;top:${pad*0.35}px;width:${G.crop.w-pad*0.7}px;height:${G.crop.h-pad*0.7}px"></div>`;
+  h+=`<div class="felt" style="--c:${SYN}px;left:${pad}px;top:${pad}px;width:${G.W*SYN}px;height:${G.Hc*SYN}px"></div>`;
   h+=`<div class="layer" style="width:${G.crop.x+G.crop.w}px;height:${G.crop.y+G.crop.h}px">`;
-  if(!isPreview()){
-    for(const it of S.items){ if(drag&&drag.slot===it.slot) continue; h+=itemHTML(it,it.x,it.y,it.rot,it.w,it.h); }
-    if(drag&&drag.active){
-      const d=drag;
-      if(d.cell) h+=`<div class="ghost ${d.ok?'':'bad'}" style="width:${d.w*PX}px;height:${d.h*PX}px;transform:${css(mul(G.M,cellT(d.cell[0],d.cell[1])))}"></div>`;
-      h+=itemHTML(d.it,d.fx,d.fy,d.rot,d.w,d.h,true);
-    }
+  for(const it of S.items){ if(drag&&drag.slot===it.slot) continue; h+=itemHTML(it,it.x,it.y,it.rot,it.w,it.h); }
+  if(drag&&drag.active){
+    const d=drag;
+    if(d.cell) h+=`<div class="ghost ${d.ok?'':'bad'}" style="width:${d.w*PX}px;height:${d.h*PX}px;transform:${css(mul(G.M,cellT(d.cell[0],d.cell[1])))}"></div>`;
+    h+=itemHTML(d.it,d.fx,d.fy,d.rot,d.w,d.h,true);
   }
   h+='</div>';
   stage.innerHTML=h;
-  let msg='';
-  if(G.synthetic&&G.missing==='image') msg=`Sem imagem da maleta ${NAMES[G.lvl]} — salve o screenshot em web/cases/${NAMES[G.lvl]}.webp`;
-  else if(G.synthetic) msg=`Maleta ${NAMES[G.lvl]} ainda sem grade: abra essa maleta no jogo uma vez para calibrar`;
-  if(isPreview()) msg=(msg?msg+' · ':'')+`Prévia da maleta ${NAMES[G.lvl]} — no jogo: ${NAMES[S.caseLevel]}`;
-  banner.hidden=!msg; banner.textContent=msg;
+  banner.hidden=true;
   renderMenu();
 }
 
@@ -201,7 +156,7 @@ function countOf(it){
   if(it.type===2||it.type===3) return it.num;
   return it.num>1?it.num:null;
 }
-function iconUrl(it){ return C ? (C.icons[String(it.id)]||C.icons[it.key]||C.icons[it.name]||null) : null; }
+function iconUrl(it){ return ICONS[String(it.id)]||ICONS[it.key]||ICONS[it.name]||null; }
 function itemHTML(it,x,y,rot,w,h,dragging){
   const T=mul(G.M,cellT(x,y));
   const url=iconUrl(it);
@@ -325,7 +280,7 @@ function fits(occ,x,y,w,h){ if(x<0||y<0||x+w>S.caseW||y+h>S.caseH) return false;
 const pointers=new Map();
 const win=$('#win');
 win.onpointerdown=e=>{
-  if(modal||!S||!S.connected||isPreview()) return;
+  if(modal||!S||!S.connected) return;
   try{ win.setPointerCapture(e.pointerId); }catch(err){}
   pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(drag&&drag.active&&pointers.size===2){ const [a,b]=[...pointers.values()]; drag.ang0=Math.atan2(b.y-a.y,b.x-a.x); drag.turns=0; return; }
@@ -407,6 +362,9 @@ function connect(){
   es.onerror=()=>{es.close();$('#dot').className='dot';$('#stx').textContent='reconectando…';setTimeout(connect,1500)};
 }
 addEventListener('resize',()=>{ if(S) render(); });
+addEventListener('focus',loadIcons);
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) loadIcons(); });
+loadIcons();
 connect();
 </script>
 </body>

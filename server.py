@@ -15,11 +15,10 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from game import Game
-from caseview import Cases
+import icons
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 game = Game()
-cases = Cases()
 cond = threading.Condition()
 snapshot = {"version": 0, "json": json.dumps({"connected": False, "error": "Iniciando..."})}
 
@@ -36,10 +35,6 @@ def publish(state):
 def full_state():
     st = game.state()
     st["running"] = game.running()
-    st["casesVersion"] = cases.version
-    cb = game.case_board()
-    if cb:
-        cases.observe(*cb)
     return st
 
 
@@ -89,9 +84,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/manifest.webmanifest":
             with open(os.path.join(HERE, "web", "manifest.webmanifest"), "rb") as f:
                 return self._send(200, f.read(), "application/manifest+json")
-        if path == "/api/cases":
-            return self._send(200, json.dumps(cases.info(), ensure_ascii=False))
-        if path.startswith("/cases/") or path.startswith("/icons/"):
+        if path == "/api/icons":
+            return self._send(200, json.dumps(icons.icons(), ensure_ascii=False))
+        if path.startswith("/icons/"):
             return self._file(path.lstrip("/"))
         if path == "/api/state":
             return self._send(200, snapshot["json"])
