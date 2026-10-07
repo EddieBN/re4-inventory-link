@@ -19,6 +19,8 @@ TYPE_NAMES = {0: "outro", 1: "arma", 2: "munição", 3: "granada", 4: "outro", 5
               6: "recuperação", 7: "item-chave", 8: "bônus", 9: "acessório", 10: "arquivo",
               11: "mapa/maleta", 12: "gema", 13: "tampinha", 14: "importante"}
 TYPE_WEAPON, TYPE_WEAPON_MOD = 1, 9
+TYPE_AMMO, TYPE_GRENADE, TYPE_RECOVERY, TYPE_KEY, TYPE_IMPORTANT = 2, 3, 6, 7, 14
+KNIFE_IDS = {13, 56}
 # Usado só até a tabela real (itemInfo do jogo) ser lida — ela exige o jogo rodando frames.
 FALLBACK_WEAPONS = {3, 16, 23, 33, 35, 37, 38, 39, 41, 42, 44, 45, 46, 47, 48, 50, 52, 53, 54, 55,
                     56, 62, 64, 65, 71, 81, 82, 83, 107, 108, 109, 148, 153, 171}
@@ -36,7 +38,7 @@ D_MAGIC, D_ORIG, D_CMD, D_ARG1, D_ARG2, D_FN, D_RESULT, D_HEARTBEAT, D_SEQ = (
 D_INFOBUF = 0x40           # 0x110 entradas * 8 bytes
 CODE_OFF = 0x900
 MAGIC = b"RE4M"
-CMD_ARM, CMD_ITEMINFO, CMD_CALL2 = 1, 2, 3
+CMD_ARM, CMD_ITEMINFO, CMD_CALL2, CMD_MGR_CALL = 1, 2, 3, 4
 N_ITEM_IDS = 0x110
 
 ntdll = ctypes.WinDLL("ntdll")
@@ -89,6 +91,12 @@ class Game:
             self.sub_screen = p.u32(p.scan1("68 ? ? ? ? E8 ? ? ? ? 68 00 00 00 F0 E8") + 1)
             self.fn_iteminfo = p.call_target(p.scan1("8D 45 ? 50 51 E8 ? ? ? ? 8A 45 ? 83 C4 08") + 5)
             self.fn_chargenum = p.call_target(p.scan1("E8 ? ? ? ? B9 ? ? ? ? 83 C4 ? 66 3B ? 0F 84"))
+            self.fn_use = p.scan1("55 8B EC 83 EC 08 56 57 8B 7D 08 8B F1 85 FF 75 0A 5F 32 C0 5E 8B E5 5D "
+                                  "C2 04 00 53 0F B7 1F 8D 45 F8 50 53 E8")
+            self.fn_erase = p.call_target(p.scan1(
+                "E8 ? ? ? ? 8A 45 ? 8B 4D ? 24 ? 66 0F ? ? 8D 04 FD ? ? ? ? 66 0B ? 66 89 53"))
+            self.glob_ptr = p.u32(p.scan1("A1 ? ? ? ? B9 FF FF FF 7F 21 48 ? A1") + 1)  # GLOBAL_WK**
+            self.cockpit = p.u32(p.scan("FF FE FF FF B9")[0] + 5)
             sched = p.scan1("74 ? B9 ? ? ? ? E8 ? ? ? ? B9 ? ? ? ? E8 ? ? ? ? E8")
             self.sched_thunk = p.call_target(sched + 17)
             # piece_info: tabela {model*, model*, u32 id, u8 w, u8 h, ...} de 0x58 bytes,
@@ -221,11 +229,21 @@ class Game:
         # --- CMD_CALL2: result = fn(arg1, arg2)  (cdecl)
         a.label("c3")
         a.raw(0x83, 0xF8, CMD_CALL2)
-        a.raw(0x0F, 0x85); a.rel32_label("finish")
+        a.raw(0x0F, 0x85); a.rel32_label("c4")
         a.raw(0xFF, 0x35); a.u32(A(D_ARG2))
         a.raw(0xFF, 0x35); a.u32(A(D_ARG1))
         a.raw(0xFF, 0x15); a.u32(A(D_FN))                   # call [fn]
         a.raw(0x83, 0xC4, 0x08)
+        a.raw(0xA3); a.u32(A(D_RESULT))
+        a.raw(0xE9); a.rel32_label("finish")
+        # --- CMD_MGR_CALL: result = (bool) ItemMgr->fn(arg1)   (__thiscall, ret 4)
+        a.label("c4")
+        a.raw(0x83, 0xF8, CMD_MGR_CALL)
+        a.raw(0x0F, 0x85); a.rel32_label("finish")
+        a.raw(0xFF, 0x35); a.u32(A(D_ARG1))                 # push [arg1]
+        a.raw(0xB9); a.u32(self.item_mgr)                   # mov ecx, ItemMgr
+        a.raw(0xFF, 0x15); a.u32(A(D_FN))                   # call [fn]
+        a.raw(0x0F, 0xB6, 0xC0)                             # movzx eax,al
         a.raw(0xA3); a.u32(A(D_RESULT))
         a.label("finish")
         a.raw(0xC7, 0x05); a.u32(A(D_CMD)); a.u32(0)        # mov [cmd],0
@@ -335,7 +353,8 @@ class Game:
                     board.append(e)
                 else:
                     others.append(e)
-            return dict(connected=True, caseLevel=lvl, caseName=CASE_NAMES[lvl], caseW=cw, caseH=ch,
+            vit = self.vitals()
+            return dict(connected=True, vitals=vit, caseLevel=lvl, caseName=CASE_NAMES[lvl], caseW=cw, caseH=ch,
                         character=char, items=board, others=others,
                         equippedId=self.p.u16(p_wep) if p_wep else None)
 
@@ -393,6 +412,89 @@ class Game:
                 raise ValueError("Espaço ocupado por outro item")
             px, py = 2 * x + (w - 1), 2 * y + (h - 1)
             self.p.write(it["addr"] + 0xA, struct.pack("<bbb", px, py, rot))
+
+    # ------------------------------------------------- vida / HUD / maleta aberta
+    def _glob(self):
+        return self.p.u32(self.glob_ptr)
+
+    def vitals(self):
+        g = self._glob()
+        hp, hp_max, sub_hp, sub_max = struct.unpack("<hhhh", self.p.read(g + 0x4FB4, 8))
+        gold = self.p.i32(g + 0x4FA8)
+        lm = self.p.read(self.cockpit, 0x6C)          # Cockpit.m_LifeMeter_0
+        c0 = struct.unpack_from("<3f", lm, 0x0C)
+        c1 = struct.unpack_from("<3f", lm, 0x1C)
+        return {"hp": hp, "hpMax": hp_max, "ashleyHp": sub_hp, "ashleyHpMax": sub_max, "gold": gold,
+                "lifeColor0": [round(v) for v in c0], "lifeColor1": [round(v) for v in c1],
+                "invOpen": bool(self.p.u32(self.sub_screen + 0x2C) & 1)}
+
+    def inventory_screen(self):
+        """Retrato da maleta aberta no jogo (ou None se ela não está visível/estável)."""
+        with self.lock:
+            if not self.p.u32(self.sub_screen + 0x2C) & 1:          # SS_OPEN_NORMAL
+                return None
+            pz = self.p.u32(self.sub_screen + 0x2AC)
+            if not pz:
+                return None
+            board, _, _, _, inhand = struct.unpack("<IIIII", self.p.read(pz, 0x14))
+            active = self.p.u32(pz + 0x30)
+            if not board or active != board or inhand:
+                return None
+            b = self.p.read(board, 0x40)
+            size = (b[4], b[5])
+            level = self.case_level()
+            if size != CASE_SIZES[level]:
+                return None
+            matrix = [round(v, 4) for v in struct.unpack_from("<12f", b, 0x0C)]
+            cursor = (struct.unpack_from("<b", b, 0x3C)[0], struct.unpack_from("<b", b, 0x3D)[0])
+            st = self.state()
+        occupied, items = set(), []
+        for it in st["items"]:
+            cells = {(it["x"] + i, it["y"] + j) for i in range(it["w"]) for j in range(it["h"])}
+            occupied |= cells
+            if it["type"] == TYPE_WEAPON:
+                count = None if it["id"] in KNIFE_IDS else it["ammo"]
+            elif it["type"] in (TYPE_AMMO, TYPE_GRENADE) or it["num"] > 1:
+                count = it["num"]
+            else:
+                count = None
+            items.append(dict(id=it["id"], rot=it["rot"], x=it["x"], y=it["y"], w=it["w"], h=it["h"],
+                              equipped=it["equipped"], count=count, covers_cursor=cursor in cells))
+        sig = (level, cursor, tuple((i["id"], i["x"], i["y"], i["rot"], i["count"], i["equipped"]) for i in items))
+        return dict(level=level, size=size, matrix=matrix, cursor=cursor, occupied=occupied, items=items,
+                    equipped_id=st["equippedId"], sig=sig)
+
+    def _mgr_call(self, fn, arg, timeout=1.5):
+        return self._exec(CMD_MGR_CALL, arg, 0, fn, timeout=timeout)
+
+    def use(self, slot):
+        """Usa um item de recuperação pelo caminho do próprio jogo (cItemMgr::use)."""
+        with self.lock:
+            it = self._find(slot)
+            if self.item_type(it["id"])[0] != TYPE_RECOVERY:
+                raise ValueError("Este item não pode ser usado")
+            if not self.running():
+                raise ValueError("Volte ao jogo (janela em foco) para usar itens")
+            g = self._glob()
+            hp, hp_max = struct.unpack("<hh", self.p.read(g + 0x4FB4, 4))
+            self.p.w8(self.item_mgr + 0x12, 0)          # m_to_whom = Leon
+            if not self._mgr_call(self.fn_use, it["addr"]):
+                raise ValueError("Não teve efeito (vida já está cheia?)")
+            hp2, hp_max2 = struct.unpack("<hh", self.p.read(g + 0x4FB4, 4))
+            return {"hp": [hp, hp2], "hpMax": [hp_max, hp_max2]}
+
+    def discard(self, slot):
+        with self.lock:
+            it = self._find(slot)
+            typ = self.item_type(it["id"])[0]
+            if typ in (TYPE_KEY, TYPE_IMPORTANT):
+                raise ValueError("Este item não pode ser descartado")
+            p_wep = self._mgr()[0]
+            if it["addr"] == p_wep:
+                raise ValueError("Equipe outra arma antes de descartar esta")
+            if not self.running():
+                raise ValueError("Volte ao jogo (janela em foco) para descartar")
+            self._mgr_call(self.fn_erase, it["addr"])
 
     def set_count(self, slot, num):
         with self.lock:

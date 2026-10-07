@@ -15,9 +15,11 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from game import Game
+from visual import CACHE, Learner
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 game = Game()
+learner = Learner(game)
 cond = threading.Condition()
 snapshot = {"version": 0, "json": json.dumps({"connected": False, "error": "Iniciando..."})}
 
@@ -29,6 +31,13 @@ def publish(state):
             snapshot["json"] = js
             snapshot["version"] += 1
             cond.notify_all()
+
+
+def full_state():
+    st = game.state()
+    st["running"] = game.running()
+    st["visual"] = {"version": learner.version, "status": learner.status}
+    return st
 
 
 def poller():
@@ -46,9 +55,7 @@ def poller():
                         publish({"connected": False, "error": str(e)})
                 time.sleep(0.25)
                 continue
-            st = game.state()
-            st["running"] = game.running()
-            publish(st)
+            publish(full_state())
         except Exception as e:
             traceback.print_exc()
             publish({"connected": False, "error": str(e)})
@@ -79,11 +86,29 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/manifest.webmanifest":
             with open(os.path.join(HERE, "web", "manifest.webmanifest"), "rb") as f:
                 return self._send(200, f.read(), "application/manifest+json")
+        if path == "/api/visual":
+            with learner.lock:
+                return self._send(200, json.dumps(learner.info(), ensure_ascii=False))
+        if path.startswith("/visual/"):
+            return self._file(path[len("/visual/"):])
         if path == "/api/state":
             return self._send(200, snapshot["json"])
         if path == "/api/events":
             return self._events()
         self._send(404, '{"error":"not found"}')
+
+    def _file(self, rel):
+        full = os.path.normpath(os.path.join(CACHE, rel))
+        if not full.startswith(os.path.normpath(CACHE) + os.sep) or not full.endswith(".png")                 or not os.path.isfile(full):
+            return self._send(404, '{"error":"not found"}')
+        with open(full, "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "max-age=31536000, immutable")  # URL leva ?v=versão
+        self.end_headers()
+        self.wfile.write(data)
 
     def _events(self):
         self.send_response(200)
@@ -124,11 +149,13 @@ class Handler(BaseHTTPRequestHandler):
                 game.set_count(slot, int(body["num"]))
             elif path == "/api/ammo":
                 game.set_ammo(slot, int(body["ammo"]))
+            elif path == "/api/use":
+                result.update(game.use(slot))
+            elif path == "/api/discard":
+                game.discard(slot)
             else:
                 return self._send(404, '{"error":"not found"}')
-            st = game.state()
-            st["running"] = game.running()
-            publish(st)
+            publish(full_state())
             self._send(200, json.dumps(result))
         except (ValueError, KeyError, TimeoutError) as e:
             self._send(400, json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
@@ -171,6 +198,7 @@ def main():
 
     atexit.register(game.unhook)
     threading.Thread(target=poller, daemon=True).start()
+    threading.Thread(target=learner.run, daemon=True).start()
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:

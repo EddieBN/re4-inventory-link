@@ -1,2 +1,4 @@
 __pycache__/
 *.pyc
+# visual aprendido do jogo instalado (assets da Capcom) - gerado localmente
+cache/
