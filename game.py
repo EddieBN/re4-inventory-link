@@ -428,41 +428,20 @@ class Game:
                 "lifeColor0": [round(v) for v in c0], "lifeColor1": [round(v) for v in c1],
                 "invOpen": bool(self.p.u32(self.sub_screen + 0x2C) & 1)}
 
-    def inventory_screen(self):
-        """Retrato da maleta aberta no jogo (ou None se ela não está visível/estável)."""
+    def case_board(self):
+        """(nível, matriz 3x4 da maleta) enquanto a maleta está aberta no jogo, senão None."""
         with self.lock:
             if not self.p.u32(self.sub_screen + 0x2C) & 1:          # SS_OPEN_NORMAL
                 return None
             pz = self.p.u32(self.sub_screen + 0x2AC)
-            if not pz:
-                return None
-            board, _, _, _, inhand = struct.unpack("<IIIII", self.p.read(pz, 0x14))
-            active = self.p.u32(pz + 0x30)
-            if not board or active != board or inhand:
+            board = self.p.u32(pz) if pz else 0
+            if not board or self.p.u32(pz + 0x30) != board:
                 return None
             b = self.p.read(board, 0x40)
-            size = (b[4], b[5])
             level = self.case_level()
-            if size != CASE_SIZES[level]:
+            if (b[4], b[5]) != CASE_SIZES[level]:
                 return None
-            matrix = [round(v, 4) for v in struct.unpack_from("<12f", b, 0x0C)]
-            cursor = (struct.unpack_from("<b", b, 0x3C)[0], struct.unpack_from("<b", b, 0x3D)[0])
-            st = self.state()
-        occupied, items = set(), []
-        for it in st["items"]:
-            cells = {(it["x"] + i, it["y"] + j) for i in range(it["w"]) for j in range(it["h"])}
-            occupied |= cells
-            if it["type"] == TYPE_WEAPON:
-                count = None if it["id"] in KNIFE_IDS else it["ammo"]
-            elif it["type"] in (TYPE_AMMO, TYPE_GRENADE) or it["num"] > 1:
-                count = it["num"]
-            else:
-                count = None
-            items.append(dict(id=it["id"], rot=it["rot"], x=it["x"], y=it["y"], w=it["w"], h=it["h"],
-                              equipped=it["equipped"], count=count, covers_cursor=cursor in cells))
-        sig = (level, cursor, tuple((i["id"], i["x"], i["y"], i["rot"], i["count"], i["equipped"]) for i in items))
-        return dict(level=level, size=size, matrix=matrix, cursor=cursor, occupied=occupied, items=items,
-                    equipped_id=st["equippedId"], sig=sig)
+            return level, [round(v, 4) for v in struct.unpack_from("<12f", b, 0x0C)]
 
     def _mgr_call(self, fn, arg, timeout=1.5):
         return self._exec(CMD_MGR_CALL, arg, 0, fn, timeout=timeout)

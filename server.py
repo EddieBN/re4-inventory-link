@@ -15,11 +15,11 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from game import Game
-from visual import CACHE, Learner
+from caseview import Cases
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 game = Game()
-learner = Learner(game)
+cases = Cases()
 cond = threading.Condition()
 snapshot = {"version": 0, "json": json.dumps({"connected": False, "error": "Iniciando..."})}
 
@@ -36,7 +36,10 @@ def publish(state):
 def full_state():
     st = game.state()
     st["running"] = game.running()
-    st["visual"] = {"version": learner.version, "status": learner.status}
+    st["casesVersion"] = cases.version
+    cb = game.case_board()
+    if cb:
+        cases.observe(*cb)
     return st
 
 
@@ -86,25 +89,29 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/manifest.webmanifest":
             with open(os.path.join(HERE, "web", "manifest.webmanifest"), "rb") as f:
                 return self._send(200, f.read(), "application/manifest+json")
-        if path == "/api/visual":
-            with learner.lock:
-                return self._send(200, json.dumps(learner.info(), ensure_ascii=False))
-        if path.startswith("/visual/"):
-            return self._file(path[len("/visual/"):])
+        if path == "/api/cases":
+            return self._send(200, json.dumps(cases.info(), ensure_ascii=False))
+        if path.startswith("/cases/") or path.startswith("/icons/"):
+            return self._file(path.lstrip("/"))
         if path == "/api/state":
             return self._send(200, snapshot["json"])
         if path == "/api/events":
             return self._events()
         self._send(404, '{"error":"not found"}')
 
+    TYPES = {".png": "image/png", ".webp": "image/webp", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+
     def _file(self, rel):
-        full = os.path.normpath(os.path.join(CACHE, rel))
-        if not full.startswith(os.path.normpath(CACHE) + os.sep) or not full.endswith(".png")                 or not os.path.isfile(full):
+        from urllib.parse import unquote
+        root = os.path.join(HERE, "web")
+        full = os.path.normpath(os.path.join(root, unquote(rel)))
+        ext = os.path.splitext(full)[1].lower()
+        if not full.startswith(os.path.normpath(root) + os.sep) or ext not in self.TYPES or not os.path.isfile(full):
             return self._send(404, '{"error":"not found"}')
         with open(full, "rb") as f:
             data = f.read()
         self.send_response(200)
-        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Type", self.TYPES[ext])
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "max-age=31536000, immutable")  # URL leva ?v=versão
         self.end_headers()
@@ -198,7 +205,6 @@ def main():
 
     atexit.register(game.unhook)
     threading.Thread(target=poller, daemon=True).start()
-    threading.Thread(target=learner.run, daemon=True).start()
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:

@@ -1,4 +1,7 @@
 __pycache__/
 *.pyc
-# visual aprendido do jogo instalado (assets da Capcom) - gerado localmente
-cache/
+# imagens do jogo (Capcom): ficam só na sua máquina
+web/cases/*
+!web/cases/LEIA-ME.txt
+web/icons/*
+!web/icons/LEIA-ME.txt

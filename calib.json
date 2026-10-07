@@ -14,5 +14,22 @@
    0.001366996910794103
   ],
   "note": "camera do inventario ajustada a partir de uma captura 2560x1440 (rms 0.19 px); coordenadas REF 1920x1080"
- }
+ },
+ "boards": {
+  "0": [
+   1,
+   0,
+   0,
+   -848.9805,
+   0,
+   0.8419,
+   0.5396,
+   360.0009,
+   0,
+   -0.5396,
+   0.8419,
+   -300
+  ]
+ },
+ "note_boards": "matriz 3x4 da maleta em repouso por nivel (0=S,1=M,2=L,3=XL); gravada automaticamente quando a maleta fica parada na tela"
 }

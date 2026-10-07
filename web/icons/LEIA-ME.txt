@@ -1,0 +1,3 @@
+Icones dos itens (vista de cima, orientacao padrao, fundo transparente).
+Nome do arquivo: ID do item (ex.: 35.png) ou o nome interno (ex.: Shotgun.png) ou o nome exibido.
+O icone e esticado para ocupar exatamente as celulas do item.

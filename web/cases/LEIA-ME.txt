@@ -1,0 +1,3 @@
+Screenshots 16:9 do inventario com a maleta VAZIA, um por tamanho:
+S.webp, M.webp, L.webp, XL.webp (tambem aceita .png/.jpg).
+A grade e calculada sozinha a partir da matriz da maleta gravada pelo servidor.
