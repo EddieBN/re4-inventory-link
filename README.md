@@ -67,3 +67,29 @@ switch-sdl2_image`). No MSYS2 do devkitPro: `cd /d/RE4/switch && make`.
   agendado e usar/descartar pede para voltar ao jogo.
 - Reorganizar/girar itens altera o inventário na memória; evite fazer isso com a maleta aberta no jogo.
 - Os padrões de memória vêm do projeto re4_tweaks; outras versões do executável podem não ser compatíveis.
+
+## Créditos e tecnologias
+**Assistente de IA (LLM):** desenvolvido com o **[Claude Code](https://claude.com/claude-code)** (Anthropic, modelo
+Claude Opus 5.5), que escreveu o código e fez a engenharia reversa do jogo em execução.
+
+**Projetos de terceiros**
+- **[re4_tweaks](https://github.com/nipkownix/re4_tweaks)** (nipkownix e colaboradores) — referência das estruturas do
+  jogo (inventário, itens, controle, vida) e dos padrões de memória; nomes dos itens.
+- **[devkitPro](https://devkitpro.org/)** — toolchain **devkitA64** e biblioteca **[libnx](https://github.com/switchbrew/libnx)**
+  para homebrew do Nintendo Switch.
+- **[SDL2](https://www.libsdl.org/)**, **SDL2_ttf** e **SDL2_image** (port do devkitPro) — desenho, fontes e imagens no Switch.
+- **[MSYS2](https://www.msys2.org/)** — ambiente onde o devkitPro roda no Windows.
+- **[Capstone](https://www.capstone-engine.org/)** — desmontador x86 usado durante o desenvolvimento para analisar o jogo.
+
+**Tecnologias do projeto**
+- **Python 3** (só biblioteca padrão: `http.server`, `ctypes`, `socket`, `struct`) — servidor do PC.
+- **WinAPI via ctypes** (`ReadProcessMemory`, `WriteProcessMemory`, `VirtualAllocEx`) e *pattern scan* no `bio4.exe`.
+- **Assembly x86** montado por um mini-montador em Python — stub injetado que roda a cada frame na thread principal
+  do jogo e chama as funções do próprio RE4.
+- **Desvio da IAT do XInput** (`XInputGetState/SetState/GetCapabilities`) — controle virtual sem driver, com vibração.
+- **HTTP + Server-Sent Events** (página web), **HTTP long-poll** (Switch), **UDP** a 60 Hz (controle) e
+  **broadcast UDP** (descoberta automática do PC na rede).
+- **HTML, CSS e JavaScript** puros (sem frameworks) — interface do celular.
+- **C** com libnx + SDL2 — homebrew do Switch.
+
+Resident Evil 4 é marca da Capcom. Este projeto não é afiliado à Capcom nem à Nintendo e não distribui arquivos do jogo.
