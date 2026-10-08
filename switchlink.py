@@ -47,26 +47,36 @@ class PadReceiver:
                 sock.sendto(b"RE4!" + struct.pack("<H", self.http_port), addr)
                 print(f"[pad] Switch procurando o servidor ({addr[0]}) — respondido")
                 continue
-            if len(data) != PKT.size:
-                continue
-            magic, _seq, buttons, lt, rt, lx, ly, rx, ry = PKT.unpack(data)
-            if magic != b"RE4P" or not self.game.connected():
-                continue
-            try:
-                self.game.set_pad(buttons, lt, rt, lx, ly, rx, ry)
-                left, right = self.game.rumble()
-                sock.sendto(REPLY.pack(b"RE4R", left, right), addr)
-            except OSError:
-                continue
-            if not self.active or self.client != addr[0]:
-                print(f"[pad] controle do Switch conectado ({addr[0]})")
-            self.last, self.client, self.active = time.time(), addr[0], True
+            reply = self.feed(data, f"Switch {addr[0]}")
+            if reply:
+                try:
+                    sock.sendto(reply, addr)
+                except OSError:
+                    pass
+
+    def feed(self, data, who):
+        """Aplica um pacote RE4P (do Switch por UDP ou do navegador por WebSocket).
+        Retorna a resposta RE4R (vibração) ou None."""
+        if len(data) != PKT.size:
+            return None
+        magic, _seq, buttons, lt, rt, lx, ly, rx, ry = PKT.unpack(data)
+        if magic != b"RE4P" or not self.game.connected():
+            return None
+        try:
+            self.game.set_pad(buttons, lt, rt, lx, ly, rx, ry)
+            left, right = self.game.rumble()
+        except OSError:
+            return None
+        if not self.active or self.client != who:
+            print(f"[pad] controle conectado: {who}")
+        self.last, self.client, self.active = time.time(), who, True
+        return REPLY.pack(b"RE4R", left, right)
 
     def _watchdog(self):
         if self.active and time.time() - self.last > PAD_TIMEOUT:
             self.game.release_pad()
             self.active = False
-            print("[pad] controle do Switch desconectado")
+            print(f"[pad] controle desconectado: {self.client}")
 
 
 def _clean(s):

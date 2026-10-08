@@ -49,6 +49,10 @@ Um servidor Python (só stdlib) lê/escreve a memória do jogo e serve uma pági
   `56 50 B9 ? ? ? ? E8 ? ? ? ? A1` +7) para os demais. Comandos do stub: 5 = cdecl 3 args, 6 = ItemMgr thiscall 2 args.
 - Combinações: tabela do jogo `{u16 a, u16 b, u16 resultado}` ×75 (padrão `B8 ? ? ? ? 33 C9 66 3B 30 75 ? 66 3B 50 02 74` +1).
   Armas com acessório (ex.: 36, 38, 50, 108) não têm peça em `piece_info` — combinação recusada por enquanto.
+- Controle pelo navegador: Gamepad API exige contexto seguro (Chrome/Firefox) → servidor também em HTTPS 8443 com
+  certificado autoassinado gerado por `certgen.py` (RSA 2048 + X.509 em Python puro, em `certs/`, fora do git).
+  `/api/pad` é WebSocket (`wsock.py`): pacotes RE4P → `pad_rx.feed()` (mesmo watchdog do UDP). Na página, botão 🎮.
+  Steam Deck: Chrome como jogo não Steam + layout de controle "Gamepad" no Steam Input.
 - NÃO rodar `game.attach()` em outro processo com o servidor no ar: ao sair ele desfaz o hook do servidor.
 - Decisão do usuário: Switch = tela da maleta (mesmo visual da web) + controle; IP digitado no app.
 

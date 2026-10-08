@@ -8,6 +8,7 @@ import atexit
 import json
 import os
 import socket
+import ssl
 import sys
 import threading
 import time
@@ -15,11 +16,14 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from game import Game
+import certgen
 import icons
 import switchlink
+import wsock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 game = Game()
+pad_rx = switchlink.PadReceiver(game)      # controle: UDP (Switch) e WebSocket (navegador)
 cond = threading.Condition()
 snapshot = {"version": 0, "json": json.dumps({"connected": False, "error": "Iniciando..."})}
 
@@ -100,6 +104,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._events()
         if path == "/api/switch/state":
             return self._switch_state()
+        if path == "/api/pad":
+            return self._pad_ws()
         self._send(404, '{"error":"not found"}')
 
     TYPES = {".png": "image/png", ".webp": "image/webp", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
@@ -119,6 +125,34 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "max-age=31536000, immutable")  # URL leva ?v=versão
         self.end_headers()
         self.wfile.write(data)
+
+    def _pad_ws(self):
+        """Controle pelo navegador (Gamepad API): pacotes RE4P por WebSocket; responde a vibração."""
+        if not wsock.accept(self):
+            return self._send(400, '{"error":"esperado WebSocket"}')
+        try:
+            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except OSError:
+            pass
+        who = f"navegador {self.client_address[0]}"
+        last_reply = None
+        try:
+            while True:
+                op, data = wsock.recv(self.rfile)
+                if op == 0x8:                       # close
+                    break
+                if op == 0x9:                       # ping
+                    wsock.send(self.wfile, data, op=0xA)
+                    continue
+                if op != 0x2:
+                    continue
+                reply = pad_rx.feed(data, who)
+                if reply and reply != last_reply:   # só manda quando a vibração muda
+                    wsock.send(self.wfile, reply)
+                    last_reply = reply
+        except (ConnectionError, OSError, ValueError):
+            pass
+        self.close_connection = True
 
     def _switch_state(self):
         """Long-poll: responde quando a versão muda (ou após 8 s). ?v=<última versão vista>."""
@@ -194,9 +228,23 @@ class Server(ThreadingHTTPServer):
     daemon_threads = True
 
     def handle_error(self, request, client_address):
-        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError)):
-            return  # navegador fechou a conexão — normal
+        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError, ssl.SSLError)):
+            return  # navegador fechou a conexão / recusou o certificado — normal
         super().handle_error(request, client_address)
+
+
+class TLSServer(Server):
+    """HTTPS: o handshake TLS acontece na thread de cada conexão (não trava o accept)."""
+
+    def __init__(self, addr, handler, ctx):
+        super().__init__(addr, handler)
+        self.ctx = ctx
+
+    def finish_request(self, request, client_address):
+        request.settimeout(10)
+        request = self.ctx.wrap_socket(request, server_side=True)
+        request.settimeout(None)
+        super().finish_request(request, client_address)
 
 
 def lan_ips():
@@ -220,21 +268,40 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8044)
     ap.add_argument("--host", default="0.0.0.0")
+    ap.add_argument("--https-port", type=int, default=8443)
     args = ap.parse_args()
 
     atexit.register(game.unhook)
     threading.Thread(target=poller, daemon=True).start()
-    threading.Thread(target=switchlink.PadReceiver(game, args.port).run, daemon=True).start()
+    pad_rx.http_port = args.port
+    threading.Thread(target=pad_rx.run, daemon=True).start()
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
         pass
     srv = Server((args.host, args.port), Handler)
+    ips = lan_ips()
+    https_ok = False
+    try:   # HTTPS: necessário para o navegador liberar controles (Gamepad API) fora do localhost
+        if not os.path.exists(certgen.CERT_FILE):
+            print("Gerando certificado HTTPS (só na primeira vez)...")
+        cert, key = certgen.ensure(ips)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(cert, key)
+        tls = TLSServer((args.host, args.https_port), Handler, ctx)
+        threading.Thread(target=tls.serve_forever, daemon=True).start()
+        https_ok = True
+    except Exception as e:
+        print(f"[!] HTTPS desativado ({e}) — o controle pelo navegador só funcionará em localhost")
     print("=" * 56)
     print(" RE4 Inventory Link — abra no celular (mesma rede):")
-    for ip in lan_ips():
+    for ip in ips:
         print(f"   http://{ip}:{args.port}")
     print(f"   (neste PC: http://localhost:{args.port})")
+    if https_ok:
+        print(" Para usar um CONTROLE no navegador (celular com controle, Steam Deck...):")
+        for ip in ips:
+            print(f"   https://{ip}:{args.https_port}   (aceite o aviso de certificado na 1ª vez)")
     print(f" Switch: abra o RE4 Inventory — ele encontra este PC sozinho (ou digite o IP acima)")
     print(" Ctrl+C para sair (o hook é removido do jogo).")
     print("=" * 56)

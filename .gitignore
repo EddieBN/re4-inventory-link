@@ -8,3 +8,5 @@ switch/*.elf
 switch/*.nacp
 switch/*.nro
 switch/*.map
+# certificado HTTPS gerado localmente na 1a execucao
+certs/

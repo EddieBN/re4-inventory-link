@@ -20,6 +20,20 @@ mostrando a maleta do jogo.
   - PC: botão direito, roda do mouse ou tecla **R** durante o arraste.
 - *Examine* mostra munição e melhorias; *Ajustes…* edita munição/quantidade.
 
+## Controle pelo navegador (celular com controle, Steam Deck, tablet, PC…)
+Qualquer aparelho com navegador e um controle (Bluetooth, USB ou acoplado ao celular, como Backbone/Kishi) vira
+**tela da maleta + controle do jogo**. O PC entrega o controle ao RE4 como um controle Xbox, com vibração.
+1. No aparelho, abra **`https://<ip-do-pc>:8443`** (o endereço aparece no console do `iniciar.bat`).
+   Na primeira vez o navegador avisa sobre o certificado: toque em **Avançado → Continuar**. O certificado é gerado
+   pelo próprio mod no seu PC (`certs/`); os navegadores só liberam controles em páginas HTTPS.
+2. Toque em **🎮 Controle** no topo e aperte qualquer botão do controle.
+- Botões no layout Xbox (A embaixo). Tocar no 🎮 de novo desliga.
+- **Steam Deck:** no Modo Desktop instale o Google Chrome (Discover) → na Steam, *Adicionar jogo não Steam* → Chrome.
+  Em *Propriedades → Opções de inicialização* use
+  `--kiosk https://<ip-do-pc>:8443` (o comando já preenchido termina com `@@u @@`; coloque o endereço antes disso).
+  No Modo de Jogo, em *Configurações do controle* do Chrome escolha o layout **Gamepad** (o padrão do navegador transforma
+  o analógico em mouse e o navegador não vê o controle).
+
 ## Nintendo Switch (homebrew)
 O Switch vira **controle do jogo + tela da maleta** (como um Wii U GamePad): o PC mostra o jogo e o Switch mostra
 a mesma maleta da página web; os Joy-Cons/Pro Controller controlam o Leon.
@@ -57,6 +71,8 @@ switch-sdl2_image`). No MSYS2 do devkitPro: `cd /d/RE4/switch && make`.
   (descartar), `itemInfo` e `WeaponId2ChargeNum`. O controle remoto entra desviando as importações
   `XInputGetState/SetState/GetCapabilities` do jogo: o RE4 enxerga um controle Xbox no slot 1.
 - `icons.py` — lista os ícones de `web/icons/`.
+- `certgen.py` — gera o certificado HTTPS (Python puro, sem OpenSSL). `wsock.py` — WebSocket mínimo para o controle
+  pelo navegador (`/api/pad`, mesmo pacote `RE4P` do Switch).
 - `switchlink.py` — ponte com o Switch: recebe o controle por UDP (porta 8045) e serve o estado da maleta em texto
   (`/api/switch/state`, long-poll).
 - `switch/` — homebrew do Switch (C, libnx + SDL2).

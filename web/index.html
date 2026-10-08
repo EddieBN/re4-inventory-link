@@ -20,6 +20,8 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:var(
 #bar .dot{width:9px;height:9px;border-radius:50%;background:#c0392b}#bar .dot.run{background:#2ecc71}#bar .dot.pause{background:#e5b335}
 #bar .sp{flex:1}
 #bar>button{font:italic 15px var(--serif);color:var(--ink);background:rgba(30,30,26,.9);border:1px solid #57554a;padding:5px 10px;cursor:pointer}
+#bar>button.on{background:linear-gradient(180deg,#4c6b45,#26381f);border-color:#8fc27f;color:#fff}
+#bar>button.wait{border-color:#e5b335}
 #stage-wrap{position:fixed;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center}
 .win{position:relative;overflow:hidden;background:#000}
 .stage{position:absolute;left:0;top:0;transform-origin:0 0}
@@ -77,6 +79,7 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:var(
 <div id="bar">
   <span class="dot" id="dot"></span><span id="stx">conectando…</span>
   <span class="sp"></span>
+  <button id="padBtn" title="Usar um controle conectado a este aparelho para controlar o jogo">🎮 Controle</button>
   <button id="othersBtn">Keys / Treasures</button>
 </div>
 <div id="stage-wrap"><div class="win" id="win"><div class="stage" id="stage"></div></div></div>
@@ -377,6 +380,94 @@ function connect(){
 addEventListener('resize',()=>{ if(S) render(); });
 addEventListener('focus',loadIcons);
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden) loadIcons(); });
+// ======================================================================
+//  Controle pelo navegador (Gamepad API): celular com controle acoplado, Steam Deck, PC…
+//  Manda o estado para o PC por WebSocket no mesmo formato do Switch (RE4P); o PC entrega ao
+//  jogo como um controle Xbox. Chrome/Firefox só liberam controles em página segura (HTTPS).
+// ======================================================================
+const Pad={on:false,ws:null,seq:0,last:'',lastSend:0,rumble:[0,0],rumbleAt:0,name:''};
+const XI={up:0x1,down:0x2,left:0x4,right:0x8,start:0x10,back:0x20,ls:0x40,rs:0x80,lb:0x100,rb:0x200,a:0x1000,b:0x2000,x:0x4000,y:0x8000};
+// layout "standard" da Gamepad API (posições iguais às do controle Xbox)
+const PAD_MAP=[[0,XI.a],[1,XI.b],[2,XI.x],[3,XI.y],[4,XI.lb],[5,XI.rb],[8,XI.back],[9,XI.start],[10,XI.ls],[11,XI.rs],
+  [12,XI.up],[13,XI.down],[14,XI.left],[15,XI.right]];
+const padSecure=()=>window.isSecureContext||location.hostname==='localhost'||location.hostname==='127.0.0.1';
+function padGet(){
+  const list=[...(navigator.getGamepads?navigator.getGamepads():[])].filter(Boolean);
+  return list.find(g=>g.mapping==='standard')||list[0]||null;
+}
+function padUi(){
+  const b=$('#padBtn');
+  b.className=Pad.on?(Pad.name&&Pad.ws&&Pad.ws.readyState===1?'on':'wait'):'';
+  b.textContent=!Pad.on?'🎮 Controle':Pad.name?'🎮 Controle: ligado':'🎮 Aperte um botão…';
+}
+function padConnect(){
+  if(!Pad.on||(Pad.ws&&Pad.ws.readyState<2)) return;
+  const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/api/pad');
+  ws.binaryType='arraybuffer';
+  ws.onopen=padUi;
+  ws.onmessage=ev=>{
+    const d=new DataView(ev.data); if(d.byteLength<8) return;
+    Pad.rumble=[d.getUint16(4,true),d.getUint16(6,true)]; Pad.rumbleAt=0;
+  };
+  ws.onclose=()=>{ Pad.ws=null; padUi(); if(Pad.on) setTimeout(padConnect,1000); };
+  Pad.ws=ws;
+}
+function padPacket(btn,lt,rt,lx,ly,rx,ry){
+  const b=new ArrayBuffer(20), d=new DataView(b);
+  [82,69,52,80].forEach((c,i)=>d.setUint8(i,c));            // "RE4P"
+  d.setUint32(4,(++Pad.seq)>>>0,true); d.setUint16(8,btn,true); d.setUint8(10,lt); d.setUint8(11,rt);
+  d.setInt16(12,lx,true); d.setInt16(14,ly,true); d.setInt16(16,rx,true); d.setInt16(18,ry,true);
+  return b;
+}
+const ax=v=>Math.max(-32767,Math.min(32767,Math.round((v||0)*32767)));
+function padTick(){
+  if(!Pad.on) return;
+  requestAnimationFrame(padTick);
+  const g=padGet();
+  if(!!g!==!!Pad.name){ Pad.name=g?g.id:''; padUi(); if(g) toast('Controle: '+g.id.slice(0,60)); }
+  if(!g||!Pad.ws||Pad.ws.readyState!==1) return;
+  let btn=0;
+  for(const [i,bit] of PAD_MAP) if(g.buttons[i]&&g.buttons[i].pressed) btn|=bit;
+  const tr=i=>g.buttons[i]?Math.round(g.buttons[i].value*255):0;
+  // Gamepad API: eixo Y positivo = para baixo; XInput: positivo = para cima
+  const st=[btn,tr(6),tr(7),ax(g.axes[0]),-ax(g.axes[1]),ax(g.axes[2]),-ax(g.axes[3])];
+  const key=st.join(','), now=performance.now();
+  if(key!==Pad.last||now-Pad.lastSend>100){                 // manda quando muda (e a cada 100 ms, para o PC saber que está vivo)
+    Pad.ws.send(padPacket(...st)); Pad.last=key; Pad.lastSend=now;
+  }
+  const [L,R]=Pad.rumble, va=g.vibrationActuator;
+  if(va&&(L||R)&&now-Pad.rumbleAt>200){
+    Pad.rumbleAt=now;
+    try{ va.playEffect('dual-rumble',{startDelay:0,duration:250,strongMagnitude:L/65535,weakMagnitude:R/65535}); }catch(e){}
+  }
+}
+function padSet(on){
+  Pad.on=on; Pad.name=''; Pad.last='';
+  try{localStorage.setItem('re4-pad',on?'1':'0')}catch(e){}
+  if(on){ padConnect(); requestAnimationFrame(padTick); }
+  else if(Pad.ws){ try{ if(Pad.ws.readyState===1) Pad.ws.send(padPacket(0,0,0,0,0,0,0)); Pad.ws.close(); }catch(e){} Pad.ws=null; }
+  padUi();
+}
+$('#padBtn').addEventListener('click',()=>{
+  if(Pad.on) return padSet(false);
+  if(!padSecure()){
+    const url='https://'+location.hostname+':8443'+location.pathname;
+    const m=openModal(`<h2>Controle precisa de HTTPS</h2>
+      <div class="sub">Por segurança, o navegador só libera controles em páginas seguras. Abra este endereço e,
+      no aviso de certificado, toque em <b>Avançado → Continuar</b> (o certificado é do seu PC, gerado pelo mod):</div>
+      <div class="kv"><b>Endereço</b><span><a href="${url}" style="color:#e8dc9a">${esc(url)}</a></span></div>
+      <div class="btns"><button class="btn" data-a="go">Abrir em HTTPS</button><button class="btn" data-a="x">Back</button></div>`);
+    m.addEventListener('click',e=>{const b=e.target.closest('[data-a]'); if(!b) return; if(b.dataset.a==='go') location.href=url; else closeModal();});
+    return;
+  }
+  if(!navigator.getGamepads) return toast('Este navegador não suporta controles (Gamepad API)');
+  padSet(true);
+  toast('Conecte o controle e aperte qualquer botão');
+});
+addEventListener('gamepadconnected',e=>{ if(Pad.on){ Pad.name=e.gamepad.id; padUi(); } });
+addEventListener('gamepaddisconnected',()=>{ if(Pad.on&&!padGet()){ Pad.name=''; padUi(); toast('Controle desconectado'); } });
+try{ if(localStorage.getItem('re4-pad')==='1'&&padSecure()) padSet(true); }catch(e){}
+
 loadIcons();
 loadCombos();
 connect();
