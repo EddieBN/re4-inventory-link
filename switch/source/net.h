@@ -13,3 +13,7 @@ void pad_send(uint32_t seq, uint16_t buttons, uint8_t lt, uint8_t rt,
               int16_t lx, int16_t ly, int16_t rx, int16_t ry);
 // Lê respostas pendentes; retorna 1 se recebeu vibração nova.
 int  pad_poll_rumble(uint16_t *left, uint16_t *right);
+
+// Procura o servidor na rede local (broadcast UDP "RE4?" na porta do controle).
+// Retorna 0 e preenche ip_out com o IP do PC que respondeu, ou -1.
+int discover_server(int pad_port, char *ip_out, int n, int timeout_ms);

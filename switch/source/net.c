@@ -166,3 +166,41 @@ int pad_poll_rumble(uint16_t *left, uint16_t *right)
     }
     return got;
 }
+
+// ------------------------------------------------------------------ descoberta
+int discover_server(int pad_port, char *ip_out, int n, int timeout_ms)
+{
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0)
+        return -1;
+    int yes = 1;
+    setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes));
+    struct sockaddr_in dst;
+    memset(&dst, 0, sizeof(dst));
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(pad_port);
+    // broadcast geral + broadcast da sub-rede /24 do próprio Switch
+    uint32_t addrs[2] = {htonl(INADDR_BROADCAST), 0};
+    uint32_t me = (uint32_t)gethostid();          // IP do Switch (ordem de rede)
+    int na = 1;
+    if (me && me != htonl(INADDR_LOOPBACK))
+        addrs[na++] = (me & htonl(0xFFFFFF00)) | htonl(0xFF);
+    for (int i = 0; i < na; i++) {
+        dst.sin_addr.s_addr = addrs[i];
+        sendto(fd, "RE4?", 4, 0, (struct sockaddr *)&dst, sizeof(dst));
+    }
+    int ok = -1;
+    struct pollfd p = {.fd = fd, .events = POLLIN};
+    if (poll(&p, 1, timeout_ms) > 0) {
+        char buf[16];
+        struct sockaddr_in from;
+        socklen_t fl = sizeof(from);
+        int r = recvfrom(fd, buf, sizeof(buf), 0, (struct sockaddr *)&from, &fl);
+        if (r >= 4 && !memcmp(buf, "RE4!", 4)) {
+            snprintf(ip_out, n, "%s", inet_ntoa(from.sin_addr));
+            ok = 0;
+        }
+    }
+    close(fd);
+    return ok;
+}

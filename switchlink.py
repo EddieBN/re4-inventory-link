@@ -9,6 +9,7 @@
 Pacote do Switch (little-endian, 20 bytes):  "RE4P" u32 seq | u16 botões XInput | u8 LT | u8 RT |
                                               i16 LX | i16 LY | i16 RX | i16 RY
 Resposta (8 bytes):                           "RE4R" u16 vibração esquerda | u16 vibração direita
+Descoberta: o Switch manda "RE4?" em broadcast para a porta 8045; o servidor responde "RE4!" u16 porta HTTP.
 """
 import socket
 import struct
@@ -22,8 +23,9 @@ REPLY = struct.Struct("<4sHH")
 
 
 class PadReceiver:
-    def __init__(self, game):
+    def __init__(self, game, http_port=8044):
         self.game = game
+        self.http_port = http_port
         self.last = 0.0
         self.client = None
         self.active = False
@@ -40,6 +42,10 @@ class PadReceiver:
                 continue
             except OSError:
                 time.sleep(0.1)
+                continue
+            if data == b"RE4?":                      # descoberta automática do servidor na rede
+                sock.sendto(b"RE4!" + struct.pack("<H", self.http_port), addr)
+                print(f"[pad] Switch procurando o servidor ({addr[0]}) — respondido")
                 continue
             if len(data) != PKT.size:
                 continue

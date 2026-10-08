@@ -27,8 +27,9 @@ a mesma maleta da página web; os Joy-Cons/Pro Controller controlam o Leon.
 1. Copie `switch/re4inv.nro` para `SD:/switch/re4inv.nro` (ou envie pela rede: no hbmenu aperte **Y** e rode
    `nxlink -a <ip-do-switch> switch/re4inv.nro` no MSYS2 do devkitPro).
 2. Abra o **RE4 Inventory** pelo hbmenu (de preferência segurando **R** ao abrir um jogo, para ter memória cheia).
-3. Na primeira vez abre a tela **Config.**: digite o IP do PC (o mesmo do console do `iniciar.bat`) e toque em
-   **Conectar**. Fica salvo em `sdmc:/switch/re4inv/config.txt`.
+3. O app **encontra o PC sozinho** na rede (broadcast UDP na porta 8045) — inclusive se o roteador trocar o IP do PC.
+   Se não achar, toque em **Config.** e digite o IP mostrado no console do `iniciar.bat` (não precisa de porta).
+   Fica salvo em `sdmc:/switch/re4inv/config.txt`.
 - Toque na tela: menu Equip / Use / Examine / Discard; segure e arraste para mover; gire com dois dedos.
 - Botões: **Config.** permite trocar o layout — *posição Xbox* (o botão de baixo é o A do jogo) ou
   *rótulos Nintendo* (A = A). Com um painel aberto, os botões navegam o painel e o Leon fica parado.

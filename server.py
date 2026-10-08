@@ -215,7 +215,7 @@ def main():
 
     atexit.register(game.unhook)
     threading.Thread(target=poller, daemon=True).start()
-    threading.Thread(target=switchlink.PadReceiver(game).run, daemon=True).start()
+    threading.Thread(target=switchlink.PadReceiver(game, args.port).run, daemon=True).start()
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
@@ -226,7 +226,7 @@ def main():
     for ip in lan_ips():
         print(f"   http://{ip}:{args.port}")
     print(f"   (neste PC: http://localhost:{args.port})")
-    print(f" Switch: abra o RE4 Inventory e digite o IP acima (controle via UDP {switchlink.PAD_PORT})")
+    print(f" Switch: abra o RE4 Inventory — ele encontra este PC sozinho (ou digite o IP acima)")
     print(" Ctrl+C para sair (o hook é removido do jogo).")
     print("=" * 56)
     try:

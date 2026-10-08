@@ -56,6 +56,9 @@ static char g_ip[64] = "";
 static int g_ip_gen = 0;            // muda quando o IP muda
 static int g_layout = 0;            // 0 = posição (estilo Xbox), 1 = rótulos Nintendo
 static volatile int g_quit = 0;
+static volatile int g_pad_reopen = 0;   // o IP mudou: a thread principal reabre o socket UDP
+static volatile int g_discover_now = 0; // pedido de busca do PC na rede
+static volatile int g_discovering = 0;
 
 static char g_toast[256];
 static u64 g_toast_until = 0;
@@ -156,13 +159,50 @@ static void parse_state(char *txt, State *st)
 }
 
 // ===================================================================== thread: estado (long-poll)
+// procura o PC na rede (broadcast); se achar, troca o IP e salva
+static int try_discover(void)
+{
+    char found[64];
+    g_discovering = 1;
+    int ok = discover_server(PAD_PORT, found, sizeof(found), 1500) == 0;
+    g_discovering = 0;
+    if (!ok)
+        return 0;
+    int changed = 0;
+    pthread_mutex_lock(&g_lock);
+    if (strcmp(found, g_ip)) {
+        snprintf(g_ip, sizeof(g_ip), "%s", found);
+        g_ip_gen++;
+        changed = 1;
+    }
+    pthread_mutex_unlock(&g_lock);
+    if (changed) {
+        cfg_save();
+        g_pad_reopen = 1;
+        char m[96];
+        snprintf(m, sizeof(m), "PC encontrado: %s", found);
+        toast(m);
+    }
+    return 1;
+}
+
 static void *state_thread(void *arg)
 {
     (void)arg;
-    int ver = -1, gen = -1;
+    int ver = -1, gen = -1, fails = 0;
+    u64 last_disc = 0;
     char ip[64];
     while (!g_quit) {
         ip_copy(ip, sizeof(ip));
+        // sem IP, IP que não responde (o roteador pode ter trocado o IP do PC) ou pedido manual: procura
+        if (g_discover_now || ((!ip[0] || fails >= 2) && now_ms() - last_disc > 4000)) {
+            g_discover_now = 0;
+            last_disc = now_ms();
+            if (try_discover()) {
+                fails = 0;
+                continue;
+            }
+        }
         if (!ip[0]) {
             svcSleepThread(300000000ULL);
             continue;
@@ -179,12 +219,14 @@ static void *state_thread(void *arg)
             State *ns = malloc(sizeof(State));
             parse_state(body, ns);
             ver = ns->version;
+            fails = 0;
             pthread_mutex_lock(&g_lock);
             g_state = *ns;
             g_net_ok = 1;
             pthread_mutex_unlock(&g_lock);
             free(ns);
         } else {
+            fails++;
             pthread_mutex_lock(&g_lock);
             g_net_ok = 0;
             pthread_mutex_unlock(&g_lock);
@@ -483,7 +525,8 @@ static void button(const char *label, int x, int y, int w, int h, int id, int ar
 }
 
 // ===================================================================== UI
-enum { B_NONE, B_KEYS, B_CONFIG, B_MENU_OPT, B_CLOSE, B_DISC_YES, B_KEY, B_KEY_BACK, B_KEY_OK, B_LAYOUT, B_EXIT };
+enum { B_NONE, B_KEYS, B_CONFIG, B_MENU_OPT, B_CLOSE, B_DISC_YES, B_KEY, B_KEY_BACK, B_KEY_OK, B_LAYOUT, B_EXIT,
+       B_DISCOVER };
 enum { M_NONE, M_EXAMINE, M_DISCARD, M_LIST, M_CONFIG };
 enum { OPT_EQUIP, OPT_USE, OPT_EXAMINE, OPT_DISCARD, OPT_CANCEL };
 
@@ -658,7 +701,8 @@ static void draw_bar(State *st, int net_ok)
                     : st->running             ? rgba(46, 204, 113, 255)
                                               : rgba(229, 179, 53, 255);
     fill(18, BAR_H / 2 - 6, 12, 12, dot);
-    const char *msg = !g_ip[0]                 ? "Configure o IP do PC"
+    const char *msg = g_discovering           ? "Procurando o PC na rede…"
+                      : !g_ip[0]               ? "PC não encontrado — toque em Config."
                       : !net_ok               ? "Conectando ao PC…"
                       : !st->connected        ? "Jogo não conectado"
                       : st->running           ? "ao vivo"
@@ -839,7 +883,14 @@ static void draw_modal(State *st)
                0, 20);
         button("Cancelar", rx, ky + 2 * (kh + 10), rw, kh, B_CLOSE, 0, 0, 24);
         button("Sair do app", rx, ky + 3 * (kh + 10), rw, kh, B_EXIT, 0, 0, 22);
-        text("Toque ou use o D-pad + A.  B volta.", x + 24, y + 620 - 40, 18, 0, rgba(156, 154, 140, 255), 0, 0, 0,
+        button(g_discovering ? "Procurando…" : "Procurar o PC automaticamente", x + 24, ky + 4 * (kh + 10) + 6, 712,
+               kh - 6, B_DISCOVER, 0, g_discovering, 22);
+        char me[96];
+        u32 hid = (u32)gethostid();
+        snprintf(me, sizeof(me), "Este Switch: %u.%u.%u.%u   •   portas 8044 (maleta) e 8045 (controle), automáticas",
+                 hid & 0xFF, (hid >> 8) & 0xFF, (hid >> 16) & 0xFF, hid >> 24);
+        text(me, x + 24, y + 620 - 62, 17, 0, rgba(156, 154, 140, 255), 0, 0, 0, NULL);
+        text("Toque ou use o D-pad + A.  B volta.", x + 24, y + 620 - 36, 17, 0, rgba(156, 154, 140, 255), 0, 0, 0,
              NULL);
     }
 }
@@ -954,6 +1005,7 @@ static void press_button(State *st, Btn *b)
     case B_KEY_OK: apply_ip(); break;
     case B_LAYOUT: g_layout = !g_layout; cfg_save(); break;
     case B_EXIT: g_quit = 1; break;
+    case B_DISCOVER: g_discover_now = 1; g_modal = M_NONE; break;
     }
 }
 
@@ -1207,9 +1259,7 @@ int main(int argc, char **argv)
 
     cfg_load();
     if (g_ip[0])
-        pad_open(g_ip, PAD_PORT);
-    else
-        open_config();
+        pad_open(g_ip, PAD_PORT);       // sem IP salvo: a thread de estado procura o PC na rede
 
     pthread_t th_state, th_act, th_icon;
     pthread_create(&th_state, NULL, state_thread, NULL);
@@ -1250,6 +1300,12 @@ int main(int argc, char **argv)
         }
 
         // controle: com um modal aberto, os botões navegam o modal (o Leon fica parado)
+        if (g_pad_reopen) {
+            g_pad_reopen = 0;
+            char ip[64];
+            ip_copy(ip, sizeof(ip));
+            pad_open(ip, PAD_PORT);
+        }
         int capture = g_modal != M_NONE;
         send_pad(&pad, capture);
         if (pad_poll_rumble(&rl, &rr))
@@ -1283,8 +1339,9 @@ int main(int argc, char **argv)
             layout_case(st->W, st->H);
             draw_case(st);
         } else {
-            const char *m = !g_ip[0] ? "Toque em Config. e digite o IP do PC"
-                            : !net_ok ? "Procurando o servidor RE4 Inventory Link no PC…"
+            const char *m = g_discovering ? "Procurando o PC na rede…"
+                            : !g_ip[0] ? "PC não encontrado. Abra o iniciar.bat no PC ou toque em Config."
+                            : !net_ok ? "Sem resposta do PC — procurando de novo…"
                                       : (st->error[0] ? st->error : "Abra o Resident Evil 4 no PC");
             text(m, SCR_W / 2, SCR_H / 2 - 16, 28, 0, rgba(230, 223, 176, 255), 1, 0, 0, NULL);
         }
