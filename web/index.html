@@ -180,7 +180,7 @@ function itemHTML(it,x,y,rot,w,h,dragging){
 function findItem(slot){ return S&&[...S.items,...S.others].find(i=>i.slot===slot) }
 function optionsFor(it){
   const o=[];
-  if(it.type===1) o.push({k:'equip',t:it.equipped?'Equipped':'Equip',off:it.equipped});
+  if(it.type===1||it.type===3) o.push({k:'equip',t:it.equipped?'Equipped':'Equip',off:it.equipped});  // armas e granadas
   if(it.type===6) o.push({k:'use',t:'Use'});
   o.push({k:'examine',t:'Examine'});
   o.push({k:'discard',t:'Discard',off:it.type===7||it.type===14||it.equipped});

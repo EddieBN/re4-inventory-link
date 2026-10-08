@@ -495,8 +495,8 @@ class Game:
     def equip(self, slot):
         with self.lock:
             it = self._find(slot)
-            if self.item_type(it["id"])[0] != TYPE_WEAPON:
-                raise ValueError("Este item não é uma arma")
+            if self.item_type(it["id"])[0] not in (TYPE_WEAPON, TYPE_GRENADE):
+                raise ValueError("Este item não pode ser equipado")
             p, d = self.p, self.data
             # espera algum comando de outro tipo terminar; um ARM pendente é substituído
             t0 = time.time()

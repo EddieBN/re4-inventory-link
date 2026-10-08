@@ -718,7 +718,7 @@ static void draw_bar(State *st, int net_ok)
 static int menu_options(Item *it, int *ids, const char **labels, int *disabled)
 {
     int n = 0;
-    if (it->type == 1) {
+    if (it->type == 1 || it->type == 3) {          // armas e granadas
         ids[n] = OPT_EQUIP, labels[n] = it->eq ? "Equipped" : "Equip", disabled[n++] = it->eq;
     }
     if (it->type == 6)
