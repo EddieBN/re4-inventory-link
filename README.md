@@ -33,6 +33,9 @@ a mesma maleta da página web; os Joy-Cons/Pro Controller controlam o Leon.
 - Toque na tela: menu Equip / Use / Examine / Discard; segure e arraste para mover; gire com dois dedos.
 - Botões: **Config.** permite trocar o layout — *posição Xbox* (o botão de baixo é o A do jogo) ou
   *rótulos Nintendo* (A = A). Com um painel aberto, os botões navegam o painel e o Leon fica parado.
+- **Easter egg:** no Switch, faça **↑ ↑ ↓ ↓ ← → ← → B A** (D-pad e botões B/A) para liberar o botão **Cheats** ao
+  lado de *Keys / Treasures*: vida cheia (Leon/Ashley), + vida máxima, modo deus, munição infinita, recarregar tudo,
+  dinheiro, maleta maior e **Dar item** (qualquer item do jogo, por categoria e quantidade). Repita o código para esconder.
 - A vibração do jogo é repassada aos Joy-Cons. Se o Switch desconectar, o controle virtual é solto em 0,4 s.
 - O PC precisa ficar com a janela do RE4 em foco (o jogo pausa sem foco).
 

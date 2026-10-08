@@ -85,6 +85,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/manifest.webmanifest":
             with open(os.path.join(HERE, "web", "manifest.webmanifest"), "rb") as f:
                 return self._send(200, f.read(), "application/manifest+json")
+        if path == "/api/switch/catalog":
+            lines = [f"K\t{i}\t{t}\t{m}\t{n}" for i, t, m, n in game.catalog()] if game.connected() else []
+            return self._send(200, "\n".join(lines) + "\n", "text/plain; charset=utf-8")
+        if path == "/api/combos":
+            return self._send(200, json.dumps(getattr(game, "combos", [])))
         if path == "/api/icons":
             return self._send(200, json.dumps(icons.icons(), ensure_ascii=False))
         if path.startswith("/icons/"):
@@ -124,7 +129,7 @@ class Handler(BaseHTTPRequestHandler):
             if snapshot["version"] == seen:
                 cond.wait(timeout=8)
             ver, js = snapshot["version"], snapshot["json"]
-        body = switchlink.text_state(json.loads(js), ver, icons.icons())
+        body = switchlink.text_state(json.loads(js), ver, icons.icons(), getattr(game, "combos", None))
         self._send(200, body, "text/plain; charset=utf-8")
 
     def _events(self):
@@ -170,10 +175,14 @@ class Handler(BaseHTTPRequestHandler):
                 result.update(game.use(slot))
             elif path == "/api/discard":
                 game.discard(slot)
+            elif path == "/api/cheat":
+                result["message"] = game.cheat(body.get("action", ""), body.get("value", 0), body.get("num", 1))
+            elif path == "/api/combine":
+                result.update(game.combine(slot, int(body["target"])))
             else:
                 return self._send(404, '{"error":"not found"}')
             publish(full_state())
-            self._send(200, json.dumps(result))
+            self._send(200, json.dumps(result, ensure_ascii=False))
         except (ValueError, KeyError, TimeoutError) as e:
             self._send(400, json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
         except Exception as e:

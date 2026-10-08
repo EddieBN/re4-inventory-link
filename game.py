@@ -35,10 +35,12 @@ PIECE_STRIDE = 0x58
 # Layout do bloco injetado
 D_MAGIC, D_ORIG, D_CMD, D_ARG1, D_ARG2, D_FN, D_RESULT, D_HEARTBEAT, D_SEQ = (
     0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C, 0x20)
+D_ARG3 = 0x24
+D_GOD, D_INF_AMMO, D_INF_ITEM, D_INF_W1 = 0x30, 0x34, 0x38, 0x3C   # cheats aplicados a cada frame
 D_INFOBUF = 0x40           # 0x110 entradas * 8 bytes
 CODE_OFF = 0x900
 MAGIC = b"RE4M"
-CMD_ARM, CMD_ITEMINFO, CMD_CALL2, CMD_MGR_CALL = 1, 2, 3, 4
+CMD_ARM, CMD_ITEMINFO, CMD_CALL2, CMD_MGR_CALL, CMD_CALL3, CMD_MGR_CALL2 = 1, 2, 3, 4, 5, 6
 N_ITEM_IDS = 0x110
 # Controle virtual (XInput): estado injetado + originais das importações + código dos stubs
 D_PAD_ACTIVE, D_PAD_STATE, D_PAD_CALLS, D_RUMBLE = 0xE00, 0xE04, 0xE14, 0xE18
@@ -98,6 +100,8 @@ class Game:
             self.fn_wepchange = p.call_target(p.scan1("6A 01 E8 ? ? ? ? 83 C4 04 E8 ? ? ? ? F6") + 0xA)
             self.sub_screen = p.u32(p.scan1("68 ? ? ? ? E8 ? ? ? ? 68 00 00 00 F0 E8") + 1)
             self.fn_iteminfo = p.call_target(p.scan1("8D 45 ? 50 51 E8 ? ? ? ? 8A 45 ? 83 C4 08") + 5)
+            self.fn_putincase = p.call_target(p.scan1("0F B7 4E 1C 52 50 51 E8") + 7)    # PutInCase(id, num, tamanho)
+            self.fn_get = p.call_target(p.scan1("56 50 B9 ? ? ? ? E8 ? ? ? ? A1") + 7)  # cItemMgr::get(id, num)
             self.fn_chargenum = p.call_target(p.scan1("E8 ? ? ? ? B9 ? ? ? ? 83 C4 ? 66 3B ? 0F 84"))
             self.fn_use = p.scan1("55 8B EC 83 EC 08 56 57 8B 7D 08 8B F1 85 FF 75 0A 5F 32 C0 5E 8B E5 5D "
                                   "C2 04 00 53 0F B7 1F 8D 45 F8 50 53 E8")
@@ -105,6 +109,15 @@ class Game:
                 "E8 ? ? ? ? 8A 45 ? 8B 4D ? 24 ? 66 0F ? ? 8D 04 FD ? ? ? ? 66 0B ? 66 89 53"))
             self.glob_ptr = p.u32(p.scan1("A1 ? ? ? ? B9 FF FF FF 7F 21 48 ? A1") + 1)  # GLOBAL_WK**
             self.cockpit = p.u32(p.scan("FF FE FF FF B9")[0] + 5)
+            # tabela de combinações do jogo {u16 a, u16 b, u16 resultado} (ervas, acessórios, tesouros),
+            # achada pela função de busca do resultado (mov eax, tabela; cmp si,[eax]; ...; cmp dx,[eax+2])
+            tbl = p.u32(p.scan1("B8 ? ? ? ? 33 C9 66 3B 30 75 ? 66 3B 50 02 74") + 1)
+            self.combos = []
+            for k in range(128):
+                a_, b_, r_ = struct.unpack("<HHH", p.read(tbl + 6 * k, 6))
+                if not (0 < a_ < N_ITEM_IDS and 0 < b_ < N_ITEM_IDS and 0 < r_ < N_ITEM_IDS):
+                    break
+                self.combos.append((a_, b_, r_))
             sched = p.scan1("74 ? B9 ? ? ? ? E8 ? ? ? ? B9 ? ? ? ? E8 ? ? ? ? E8")
             self.sched_thunk = p.call_target(sched + 17)
             # piece_info: tabela {model*, model*, u32 id, u8 w, u8 h, ...} de 0x58 bytes,
@@ -323,6 +336,24 @@ class Game:
         A = lambda off: d + off
         a.raw(0x60, 0x9C)                                   # pushad; pushfd
         a.raw(0xFF, 0x05); a.u32(A(D_HEARTBEAT))            # inc [heartbeat]
+        # --- cheat: modo deus (vida = vida máxima a cada frame)
+        a.raw(0x83, 0x3D); a.u32(A(D_GOD)); a.raw(0x00)     # cmp dword [god],0
+        a.raw(0x0F, 0x84); a.rel32_label("no_god")          # je no_god
+        a.raw(0xA1); a.u32(self.glob_ptr)                   # mov eax,[GLOBAL_WK*]
+        a.raw(0x66, 0x8B, 0x88); a.u32(0x4FB6)              # mov cx,[eax+0x4FB6]
+        a.raw(0x66, 0x89, 0x88); a.u32(0x4FB4)              # mov [eax+0x4FB4],cx
+        a.label("no_god")
+        # --- cheat: munição infinita (arma equipada sempre cheia)
+        a.raw(0x83, 0x3D); a.u32(A(D_INF_AMMO)); a.raw(0x00)
+        a.raw(0x0F, 0x84); a.rel32_label("no_inf")
+        a.raw(0xA1); a.u32(self.item_mgr + 0x0C)            # mov eax,[ItemMgr.pWep]
+        a.raw(0x3B, 0x05); a.u32(A(D_INF_ITEM))             # cmp eax,[inf_item]
+        a.raw(0x0F, 0x85); a.rel32_label("no_inf")          # outra arma equipada
+        a.raw(0x85, 0xC0)                                   # test eax,eax
+        a.raw(0x0F, 0x84); a.rel32_label("no_inf")
+        a.raw(0x66, 0x8B, 0x0D); a.u32(A(D_INF_W1))         # mov cx,[inf_w1]
+        a.raw(0x66, 0x89, 0x48, 0x08)                       # mov [eax+8],cx
+        a.label("no_inf")
         a.raw(0xA1); a.u32(A(D_CMD))                        # mov eax,[cmd]
         a.raw(0x85, 0xC0)                                   # test eax,eax
         a.raw(0x0F, 0x84); a.rel32_label("exit")            # jz exit
@@ -365,11 +396,34 @@ class Game:
         # --- CMD_MGR_CALL: result = (bool) ItemMgr->fn(arg1)   (__thiscall, ret 4)
         a.label("c4")
         a.raw(0x83, 0xF8, CMD_MGR_CALL)
-        a.raw(0x0F, 0x85); a.rel32_label("finish")
+        a.raw(0x0F, 0x85); a.rel32_label("c5")
         a.raw(0xFF, 0x35); a.u32(A(D_ARG1))                 # push [arg1]
         a.raw(0xB9); a.u32(self.item_mgr)                   # mov ecx, ItemMgr
         a.raw(0xFF, 0x15); a.u32(A(D_FN))                   # call [fn]
         a.raw(0x0F, 0xB6, 0xC0)                             # movzx eax,al
+        a.raw(0xA3); a.u32(A(D_RESULT))
+        a.raw(0xE9); a.rel32_label("finish")
+        # --- CMD_CALL3: result = (bool) fn(arg1, arg2, arg3)  (cdecl)
+        a.label("c5")
+        a.raw(0x83, 0xF8, CMD_CALL3)
+        a.raw(0x0F, 0x85); a.rel32_label("c6")
+        a.raw(0xFF, 0x35); a.u32(A(D_ARG3))
+        a.raw(0xFF, 0x35); a.u32(A(D_ARG2))
+        a.raw(0xFF, 0x35); a.u32(A(D_ARG1))
+        a.raw(0xFF, 0x15); a.u32(A(D_FN))
+        a.raw(0x83, 0xC4, 0x0C)                             # add esp,12
+        a.raw(0x0F, 0xB6, 0xC0)
+        a.raw(0xA3); a.u32(A(D_RESULT))
+        a.raw(0xE9); a.rel32_label("finish")
+        # --- CMD_MGR_CALL2: result = (bool) ItemMgr->fn(arg1, arg2)  (__thiscall, ret 8)
+        a.label("c6")
+        a.raw(0x83, 0xF8, CMD_MGR_CALL2)
+        a.raw(0x0F, 0x85); a.rel32_label("finish")
+        a.raw(0xFF, 0x35); a.u32(A(D_ARG2))
+        a.raw(0xFF, 0x35); a.u32(A(D_ARG1))
+        a.raw(0xB9); a.u32(self.item_mgr)
+        a.raw(0xFF, 0x15); a.u32(A(D_FN))
+        a.raw(0x0F, 0xB6, 0xC0)
         a.raw(0xA3); a.u32(A(D_RESULT))
         a.label("finish")
         a.raw(0xC7, 0x05); a.u32(A(D_CMD)); a.u32(0)        # mov [cmd],0
@@ -379,7 +433,7 @@ class Game:
         a.raw(0xFF, 0x25); a.u32(A(D_ORIG))                 # jmp [orig]
         return a.done()
 
-    def _exec(self, cmd, arg1=0, arg2=0, fn=0, timeout=2.0):
+    def _exec(self, cmd, arg1=0, arg2=0, fn=0, timeout=2.0, arg3=0):
         """Agenda um comando para a thread principal e espera o resultado."""
         p, d = self.p, self.data
         with self.lock:
@@ -390,6 +444,7 @@ class Game:
                 time.sleep(0.005)
             seq = p.u32(d + D_SEQ)
             p.write(d + D_ARG1, struct.pack("<IIII", arg1, arg2, fn, 0))
+            p.w32(d + D_ARG3, arg3)
             p.w32(d + D_CMD, cmd)
             while p.u32(d + D_SEQ) == seq:
                 if time.time() - t0 > timeout:
@@ -480,6 +535,8 @@ class Game:
                 else:
                     others.append(e)
             vit = self.vitals()
+            vit.update(self.cheat_flags())
+            self._update_inf_ammo()
             return dict(connected=True, vitals=vit, caseLevel=lvl, caseName=CASE_NAMES[lvl], caseW=cw, caseH=ch,
                         character=char, items=board, others=others,
                         equippedId=self.p.u16(p_wep) if p_wep else None)
@@ -572,6 +629,165 @@ class Game:
                 raise ValueError("Não teve efeito (vida já está cheia?)")
             hp2, hp_max2 = struct.unpack("<hh", self.p.read(g + 0x4FB4, 4))
             return {"hp": [hp, hp2], "hpMax": [hp_max, hp_max2]}
+
+    def combo_result(self, a, b):
+        for x, y, r in self.combos:
+            if (x, y) in ((a, b), (b, a)):
+                return r
+        return None
+
+    def combine(self, src_slot, dst_slot):
+        """Combina dois itens da maleta pela tabela de combinações do jogo (ex.: ervas).
+        O item de destino vira o resultado (mesmo lugar); o de origem é consumido."""
+        with self.lock:
+            src, dst = self._find(src_slot), self._find(dst_slot)
+            if src_slot == dst_slot:
+                raise ValueError("Escolha outro item para combinar")
+            res = self.combo_result(src["id"], dst["id"])
+            if res is None:
+                raise ValueError("Esses itens não combinam")
+            if res not in self.piece_sizes:
+                raise ValueError("Essa combinação ainda não é suportada pelo mod")
+            if not self.running():
+                raise ValueError("Volte ao jogo (janela em foco) para combinar")
+            # a arma (se houver) é a que fica — preserva melhorias e munição
+            keep, gone = (src, dst) if self.item_type(src["id"])[0] == TYPE_WEAPON else (dst, src)
+            kd = self.piece_dims(keep["id"], keep["rot"])
+            kx, ky = (keep["px"] - (kd[0] - 1)) // 2, (keep["py"] - (kd[1] - 1)) // 2
+            cw, ch = CASE_SIZES[self.case_level()]
+            occ = set()
+            for o in self._items_raw()[3]:
+                od = self.piece_dims(o["id"], o["rot"])
+                if o["slot"] in (src_slot, dst_slot) or o["onboard"] != 1 or not od:
+                    continue
+                ox, oy = (o["px"] - (od[0] - 1)) // 2, (o["py"] - (od[1] - 1)) // 2
+                occ |= {(ox + i, oy + j) for i in range(od[0]) for j in range(od[1])}
+            place = None
+            for rot in (keep["rot"], keep["rot"] ^ 1):
+                w, h = self.piece_dims(res, rot)
+                if kx + w <= cw and ky + h <= ch and not any((kx + i, ky + j) in occ for i in range(w) for j in range(h)):
+                    place = (rot, w, h)
+                    break
+            if not place:
+                raise ValueError("Sem espaço para o item combinado")
+            rot, w, h = place
+            self._mgr_call(self.fn_erase, gone["addr"])          # consome o outro pelo caminho do jogo
+            a = keep["addr"]
+            self.p.w16(a, res)
+            if self.item_type(res)[0] != TYPE_WEAPON:
+                self.p.w16(a + 2, 1)
+            self.p.write(a + 0xA, struct.pack("<bbb", 2 * kx + (w - 1), 2 * ky + (h - 1), rot))
+            return {"result": res, "name": ITEM_NAMES[res] if res < len(ITEM_NAMES) else str(res)}
+
+    # ------------------------------------------------------------- cheats
+    CASE_TYPES = (TYPE_WEAPON, TYPE_AMMO, TYPE_GRENADE, TYPE_RECOVERY, TYPE_WEAPON_MOD, TYPE_IMPORTANT)
+    ATTACHE_IDS = (124, 125, 126, 127)       # Attache Case S, M, L, XL
+
+    def cheat_flags(self):
+        try:
+            god, inf = struct.unpack("<II", self.p.read(self.data + D_GOD, 8))
+            return {"god": bool(god), "infAmmo": bool(inf)}
+        except (OSError, TypeError):
+            return {"god": False, "infAmmo": False}
+
+    def catalog(self):
+        """Itens que podem ser dados: (id, tipo, máximo por pilha, nome)."""
+        out = []
+        for iid in range(min(len(ITEM_NAMES), N_ITEM_IDS)):
+            typ, _, maxn = self.item_type(iid)
+            if typ == 0 or iid in self.ATTACHE_IDS:
+                continue
+            if typ in self.CASE_TYPES and iid not in self.piece_sizes:
+                continue                     # sem peça: não cabe na maleta (itens cortados do jogo)
+            out.append((iid, typ, maxn, ITEM_NAMES[iid]))
+        return out
+
+    def _need_running(self):
+        if not self.running():
+            raise ValueError("Volte ao jogo (janela em foco) para usar cheats")
+
+    def cheat(self, action, value=0, num=1):
+        with self.lock:
+            g = self._glob()
+            if action == "god":
+                self.p.w32(self.data + D_GOD, 1 if value else 0)
+                return "Modo deus " + ("ligado" if value else "desligado")
+            if action == "infammo":
+                self.p.w32(self.data + D_INF_AMMO, 1 if value else 0)
+                self._update_inf_ammo()
+                return "Munição infinita " + ("ligada" if value else "desligada")
+            if action == "heal":
+                self.p.w16(g + 0x4FB4, self.p.u16(g + 0x4FB6))
+                return "Vida do Leon restaurada"
+            if action == "heal_ashley":
+                self.p.w16(g + 0x4FB8, self.p.u16(g + 0x4FBA))
+                return "Vida da Ashley restaurada"
+            if action == "maxhp":
+                mx = min(2400, self.p.u16(g + 0x4FB6) + 240)
+                self.p.w16(g + 0x4FB6, mx)
+                self.p.w16(g + 0x4FB4, mx)
+                return f"Vida máxima: {mx}"
+            if action == "money":
+                gold = min(999999, max(0, self.p.i32(g + 0x4FA8) + int(value)))
+                self.p.w32(g + 0x4FA8, gold)
+                return f"{gold} PTAS"
+            if action == "refill":
+                self._need_running()
+                n = 0
+                for it in self._items_raw()[3]:
+                    typ, _, maxn = self.item_type(it["id"])
+                    if typ == TYPE_WEAPON and it["id"] not in KNIFE_IDS:
+                        mx = self.charge_num(it["id"], (it["w0"] >> 12) & 0xF)
+                        if mx and mx > 1:
+                            self.p.w16(it["addr"] + 8, (mx << 3) | (it["w1"] & 7))
+                            n += 1
+                    elif typ in (TYPE_AMMO, TYPE_GRENADE) and maxn > 1:
+                        self.p.w16(it["addr"] + 2, maxn)
+                        n += 1
+                return f"Recarregado ({n} itens)"
+            if action == "case":
+                lvl = self.case_level()
+                if lvl >= 3:
+                    raise ValueError("A maleta já é a maior (XL)")
+                self._need_running()
+                self._exec(CMD_MGR_CALL2, self.ATTACHE_IDS[lvl + 1], 1, self.fn_get)
+                self.p.write(self.sub_screen + 0x2AA, bytes([lvl + 1, lvl + 1]))   # board_size / board_next
+                return "Maleta " + CASE_NAMES[lvl + 1]
+            if action == "give":
+                self._need_running()
+                iid = int(value)
+                typ, _, maxn = self.item_type(iid)
+                if typ == 0 or iid >= min(len(ITEM_NAMES), N_ITEM_IDS):
+                    raise ValueError("Item inválido")
+                num = 1 if typ == TYPE_WEAPON else max(1, min(int(num), maxn or 1))
+                if typ in self.CASE_TYPES and iid in self.piece_sizes:
+                    ok = self._exec(CMD_CALL3, iid, num, self.fn_putincase, arg3=self.case_level())
+                    if not ok:
+                        raise ValueError("Sem espaço na maleta para esse item")
+                else:
+                    if not self._exec(CMD_MGR_CALL2, iid, num, self.fn_get):
+                        raise ValueError("O jogo recusou o item")
+                return f"Recebido: {ITEM_NAMES[iid]}" + (f" ×{num}" if num > 1 else "")
+            raise ValueError("Cheat desconhecido")
+
+    def _update_inf_ammo(self):
+        """Munição infinita: o stub mantém [arma equipada].munição = máximo; aqui atualizamos o alvo."""
+        try:
+            if not self.p.u32(self.data + D_INF_AMMO):
+                return
+            p_wep = self._mgr()[0]
+            if not p_wep:
+                return
+            iid, = struct.unpack("<H", self.p.read(p_wep, 2))
+            w0, w1 = struct.unpack("<HH", self.p.read(p_wep + 6, 4))
+            if self.item_type(iid)[0] != TYPE_WEAPON or iid in KNIFE_IDS:
+                return
+            mx = self.charge_num(iid, (w0 >> 12) & 0xF)
+            if mx and mx > 1:
+                self.p.write(self.data + D_INF_W1, struct.pack("<H", (mx << 3) | (w1 & 7)))
+                self.p.w32(self.data + D_INF_ITEM, p_wep)
+        except (OSError, TypeError, TimeoutError):
+            pass
 
     def discard(self, slot):
         with self.lock:

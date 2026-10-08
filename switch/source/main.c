@@ -47,6 +47,9 @@ typedef struct {
     int nitems;
     Other others[MAX_OTHERS];
     int nothers;
+    unsigned short combos[128][3];      // tabela de combinações do jogo (a, b, resultado)
+    int ncombos;
+    int god, infammo, hp, hpmax, gold;  // linha X
 } State;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -55,6 +58,7 @@ static int g_net_ok = 0;            // última requisição deu certo
 static char g_ip[64] = "";
 static int g_ip_gen = 0;            // muda quando o IP muda
 static int g_layout = 0;            // 0 = posição (estilo Xbox), 1 = rótulos Nintendo
+static int g_cheats = 0;            // easter egg: ↑↑↓↓←→←→ B A libera o menu de cheats
 static volatile int g_quit = 0;
 static volatile int g_pad_reopen = 0;   // o IP mudou: a thread principal reabre o socket UDP
 static volatile int g_discover_now = 0; // pedido de busca do PC na rede
@@ -86,6 +90,8 @@ static void cfg_load(void)
             snprintf(g_ip, sizeof(g_ip), "%s", line + 3);
         else if (!strncmp(line, "layout=", 7))
             g_layout = atoi(line + 7) ? 1 : 0;
+        else if (!strncmp(line, "cheats=", 7))
+            g_cheats = atoi(line + 7) ? 1 : 0;
     }
     fclose(f);
 }
@@ -97,7 +103,7 @@ static void cfg_save(void)
     FILE *f = fopen(CFG_FILE, "w");
     if (!f)
         return;
-    fprintf(f, "ip=%s\nlayout=%d\n", g_ip, g_layout);
+    fprintf(f, "ip=%s\nlayout=%d\ncheats=%d\n", g_ip, g_layout, g_cheats);
     fclose(f);
 }
 
@@ -148,6 +154,16 @@ static void parse_state(char *txt, State *st)
                 *v[i] = (i == 8 && f[1 + i][0] == '-') ? -1 : atoi(f[1 + i]);
             snprintf(it->icon, sizeof(it->icon), "%s", f[19][0] == '-' ? "" : f[19]);
             snprintf(it->name, sizeof(it->name), "%s", f[20]);
+        } else if (f[0][0] == 'X' && n >= 6) {
+            st->god = atoi(f[1]);
+            st->infammo = atoi(f[2]);
+            st->hp = atoi(f[3]);
+            st->hpmax = atoi(f[4]);
+            st->gold = atoi(f[5]);
+        } else if (f[0][0] == 'C' && n >= 4 && st->ncombos < 128) {
+            for (int k = 0; k < 3; k++)
+                st->combos[st->ncombos][k] = (unsigned short)atoi(f[1 + k]);
+            st->ncombos++;
         } else if (f[0][0] == 'O' && n >= 5 && st->nothers < MAX_OTHERS) {
             Other *o = &st->others[st->nothers++];
             o->slot = atoi(f[1]);
@@ -260,6 +276,28 @@ static void post_action(const char *path, const char *body, const char *label)
     pthread_mutex_unlock(&g_lock);
 }
 
+// extrai "chave": "valor" (string) de uma resposta JSON simples; retorna 1 se achou
+static int json_string(const char *js, const char *key, char *out, int n)
+{
+    char k[48];
+    snprintf(k, sizeof(k), "\"%s\"", key);
+    const char *p = strstr(js ? js : "", k);
+    if (!p)
+        return 0;
+    p = strchr(p + strlen(k), '"');
+    if (!p)
+        return 0;
+    p++;
+    int i = 0;
+    while (*p && *p != '"' && i < n - 1) {
+        if (*p == '\\' && p[1])
+            p++;
+        out[i++] = *p++;
+    }
+    out[i] = 0;
+    return 1;
+}
+
 // extrai "error": "..." de uma resposta JSON simples
 static void json_error(const char *js, char *out, int n)
 {
@@ -299,8 +337,11 @@ static void *action_thread(void *arg)
         char *res = NULL;
         int st = http_request(ip, HTTP_PORT, "POST", a.path, a.body, &res, NULL, 5000);
         if (st == 200 && res && (strstr(res, "\"ok\": true") || strstr(res, "\"ok\":true"))) {
+            char msg[200];
             if (strstr(res, "\"pending\": true"))
                 toast("Troca agendada — volte ao jogo no PC");
+            else if (json_string(res, "message", msg, sizeof(msg)))
+                toast(msg);
             else if (a.label[0])
                 toast(a.label);
         } else if (st < 0) {
@@ -313,6 +354,60 @@ static void *action_thread(void *arg)
         free(res);
     }
     return NULL;
+}
+
+// ===================================================================== catálogo (cheats → dar item)
+typedef struct {
+    int id, type, max;
+    char name[64];
+} CatItem;
+#define CAT_MAX 300
+static CatItem g_cat[CAT_MAX];
+static int g_ncat = 0;
+static volatile int g_cat_state = 0;    // 0 nada, 1 pedido, 2 pronto, 3 falhou
+
+static void *catalog_thread(void *arg)
+{
+    (void)arg;
+    char ip[64];
+    ip_copy(ip, sizeof(ip));
+    char *body = NULL;
+    int st = http_request(ip, HTTP_PORT, "GET", "/api/switch/catalog", NULL, &body, NULL, 6000);
+    int n = 0;
+    if (st == 200 && body) {
+        char *save = NULL;
+        for (char *line = strtok_r(body, "\n", &save); line && n < CAT_MAX; line = strtok_r(NULL, "\n", &save)) {
+            char *f[6];
+            if (split_tabs(line, f, 6) >= 5 && f[0][0] == 'K') {
+                g_cat[n].id = atoi(f[1]);
+                g_cat[n].type = atoi(f[2]);
+                g_cat[n].max = atoi(f[3]);
+                snprintf(g_cat[n].name, sizeof(g_cat[n].name), "%s", f[4]);
+                n++;
+            }
+        }
+    }
+    free(body);
+    g_ncat = n;
+    g_cat_state = n ? 2 : 3;
+    return NULL;
+}
+
+static void catalog_load(void)
+{
+    if (g_cat_state == 1 || g_cat_state == 2)
+        return;
+    g_cat_state = 1;
+    pthread_t t;
+    pthread_create(&t, NULL, catalog_thread, NULL);
+    pthread_detach(t);
+}
+
+static void cheat(const char *action, int value, int num)
+{
+    char body[128];
+    snprintf(body, sizeof(body), "{\"action\":\"%s\",\"value\":%d,\"num\":%d}", action, value, num);
+    post_action("/api/cheat", body, NULL);
 }
 
 // ===================================================================== ícones (thread baixa, main cria textura)
@@ -526,8 +621,27 @@ static void button(const char *label, int x, int y, int w, int h, int id, int ar
 
 // ===================================================================== UI
 enum { B_NONE, B_KEYS, B_CONFIG, B_MENU_OPT, B_CLOSE, B_DISC_YES, B_KEY, B_KEY_BACK, B_KEY_OK, B_LAYOUT, B_EXIT,
-       B_DISCOVER };
-enum { M_NONE, M_EXAMINE, M_DISCARD, M_LIST, M_CONFIG };
+       B_DISCOVER, B_CHEATS, B_CHEAT, B_GIVE_OPEN, B_GIVE_CAT, B_GIVE_ITEM, B_GIVE_PAGE, B_GIVE_QTY, B_GIVE_DO,
+       B_CHEATS_BACK };
+enum { M_NONE, M_EXAMINE, M_DISCARD, M_LIST, M_CONFIG, M_CHEATS, M_GIVE };
+enum { CH_HEAL, CH_HEAL_ASH, CH_MAXHP, CH_GOD, CH_INF, CH_REFILL, CH_MONEY10, CH_MONEY100, CH_CASE };
+// categorias do "Dar item"
+static const char *GIVE_CAT_NAME[] = {"Armas", "Munição", "Granadas", "Recuperação", "Acessórios", "Tesouros", "Outros"};
+static int give_cat_of(int type)
+{
+    switch (type) {
+    case 1: return 0;
+    case 2: return 1;
+    case 3: return 2;
+    case 6: return 3;
+    case 9: return 4;
+    case 5: case 8: case 12: case 13: return 5;
+    default: return 6;
+    }
+}
+static int g_give_cat = 0, g_give_page = 0, g_give_sel = -1, g_give_qty = 1;
+#define GIVE_COLS 3
+#define GIVE_ROWS 6
 enum { OPT_EQUIP, OPT_USE, OPT_EXAMINE, OPT_DISCARD, OPT_CANCEL };
 
 static int g_modal = M_NONE;
@@ -552,7 +666,7 @@ static float cell_y(float v) { return g_oy + g_pad + v * g_cs; }
 
 // arraste
 typedef struct {
-    int on, active, slot, rot, w, h, cellx, celly, ok, turns, has_ang;
+    int on, active, slot, rot, w, h, cellx, celly, ok, turns, has_ang, combine;
     float grabx, graby, fx, fy, ang0;
     float sx, sy, px, py;
     u64 t0;
@@ -686,6 +800,11 @@ static void draw_case(State *st)
         int gx = (int)cell_x(g_drag.cellx), gy = (int)cell_y(g_drag.celly);
         int gw = (int)(g_drag.w * g_cs), gh = (int)(g_drag.h * g_cs);
         SDL_Color c = g_drag.ok ? rgba(110, 230, 120, 217) : rgba(235, 80, 70, 230);
+        Item *tg = g_drag.combine >= 0 ? find_item(st, g_drag.combine) : NULL;
+        if (tg) {                                   // alvo da combinação em dourado
+            gx = (int)cell_x(tg->x), gy = (int)cell_y(tg->y), gw = (int)(tg->w * g_cs), gh = (int)(tg->h * g_cs);
+            c = rgba(232, 205, 110, 242);
+        }
         fill(gx, gy, gw, gh, rgba(c.r, c.g, c.b, 40));
         outline(gx, gy, gw, gh, (int)fmaxf(2, 6 * s), c);
         Item t = g_drag.it;
@@ -713,6 +832,8 @@ static void draw_bar(State *st, int net_ok)
     text(ipl, SCR_W / 2, BAR_H / 2 - 13, 20, 0, rgba(140, 138, 126, 255), 1, 0, 0, NULL);
     button("Config.", SCR_W - 140, 8, 128, BAR_H - 16, B_CONFIG, 0, 0, 20);
     button("Keys / Treasures", SCR_W - 140 - 220, 8, 210, BAR_H - 16, B_KEYS, 0, 0, 20);
+    if (g_cheats)
+        button("Cheats", SCR_W - 140 - 220 - 130, 8, 120, BAR_H - 16, B_CHEATS, 0, 0, 20);
 }
 
 static int menu_options(Item *it, int *ids, const char **labels, int *disabled)
@@ -860,6 +981,72 @@ static void draw_modal(State *st)
             ly += 8;
         }
         button("Back", x + 24, y + 600 - 70, 852, 50, B_CLOSE, 0, 0, 24);
+    } else if (g_modal == M_CHEATS) {
+        panel(860, 560, &x, &y);
+        text("Cheats", x + 24, y + 16, 36, 1, rgba(232, 205, 110, 255), 0, 0, 1, NULL);
+        char info[128];
+        snprintf(info, sizeof(info), "Vida %d / %d   •   %d PTAS", st->hp, st->hpmax, st->gold);
+        text(info, x + 836, y + 28, 20, 0, rgba(156, 154, 140, 255), 2, 0, 0, NULL);
+        struct { const char *label; int id; } cs[] = {
+            {"Vida cheia (Leon)", CH_HEAL}, {"Vida cheia (Ashley)", CH_HEAL_ASH}, {"+ Vida máxima", CH_MAXHP},
+            {st->god ? "Modo deus: LIGADO" : "Modo deus: desligado", CH_GOD},
+            {st->infammo ? "Munição infinita: LIGADA" : "Munição infinita: desligada", CH_INF},
+            {"Recarregar tudo", CH_REFILL}, {"+ 10.000 PTAS", CH_MONEY10}, {"+ 100.000 PTAS", CH_MONEY100},
+            {"Maleta maior", CH_CASE}};
+        int bw = 260, bh = 70, gx = x + 24, gy = y + 80;
+        for (int i = 0; i < 9; i++)
+            button(cs[i].label, gx + (i % 3) * (bw + 18), gy + (i / 3) * (bh + 16), bw, bh, B_CHEAT, cs[i].id, 0, 21);
+        button("Dar item…", gx, gy + 3 * (bh + 16) + 8, 3 * bw + 36, bh, B_GIVE_OPEN, 0, 0, 24);
+        button("Back", gx, y + 560 - 70, 3 * bw + 36, 50, B_CLOSE, 0, 0, 24);
+    } else if (g_modal == M_GIVE) {
+        panel(1180, 660, &x, &y);
+        text("Dar item", x + 24, y + 14, 32, 1, rgba(232, 205, 110, 255), 0, 0, 1, NULL);
+        for (int c = 0; c < 7; c++) {
+            int bx = x + 24 + c * 162;
+            button(GIVE_CAT_NAME[c], bx, y + 62, 154, 48, B_GIVE_CAT, c, 0, 19);
+            if (c == g_give_cat)
+                outline(bx, y + 62, 154, 48, 3, rgba(232, 205, 110, 255));
+        }
+        if (g_cat_state != 2) {
+            text(g_cat_state == 3 ? "Não foi possível carregar a lista de itens" : "Carregando itens…", x + 590,
+                 y + 300, 24, 0, rgba(230, 223, 176, 255), 1, 0, 0, NULL);
+        } else {
+            int idx[CAT_MAX], ni = 0;
+            for (int i = 0; i < g_ncat; i++)
+                if (give_cat_of(g_cat[i].type) == g_give_cat)
+                    idx[ni++] = i;
+            int per = GIVE_COLS * GIVE_ROWS, pages = ni ? (ni + per - 1) / per : 1;
+            if (g_give_page >= pages)
+                g_give_page = pages - 1;
+            int bw = 370, bh = 56;
+            for (int k = 0; k < per; k++) {
+                int j = g_give_page * per + k;
+                if (j >= ni)
+                    break;
+                CatItem *ci = &g_cat[idx[j]];
+                int bx = x + 24 + (k % GIVE_COLS) * (bw + 12), by = y + 124 + (k / GIVE_COLS) * (bh + 10);
+                button(ci->name, bx, by, bw, bh, B_GIVE_ITEM, idx[j], 0, 19);
+                if (idx[j] == g_give_sel)
+                    outline(bx, by, bw, bh, 3, rgba(232, 205, 110, 255));
+            }
+            char pg[32];
+            snprintf(pg, sizeof(pg), "%d / %d", g_give_page + 1, pages);
+            int fy = y + 124 + GIVE_ROWS * (bh + 10) + 6;
+            button("<", x + 24, fy, 70, 54, B_GIVE_PAGE, -1, g_give_page == 0, 26);
+            text(pg, x + 24 + 70 + 50, fy + 12, 22, 0, rgba(200, 198, 186, 255), 1, 0, 0, NULL);
+            button(">", x + 24 + 170, fy, 70, 54, B_GIVE_PAGE, 1, g_give_page >= pages - 1, 26);
+            CatItem *cs = g_give_sel >= 0 ? &g_cat[g_give_sel] : NULL;
+            int stack = cs && cs->type != 1 && cs->max > 1;
+            char q[24];
+            snprintf(q, sizeof(q), "x%d", g_give_qty);
+            button("-", x + 320, fy, 60, 54, B_GIVE_QTY, -1, !stack, 26);
+            text(stack ? q : "x1", x + 420, fy + 12, 24, 0, rgba(236, 235, 227, 255), 1, 0, 0, NULL);
+            button("+", x + 460, fy, 60, 54, B_GIVE_QTY, 1, !stack, 26);
+            char lbl[96];
+            snprintf(lbl, sizeof(lbl), cs ? "Dar: %s" : "Escolha um item", cs ? cs->name : "");
+            button(lbl, x + 540, fy, 616, 54, B_GIVE_DO, 0, !cs, 21);
+        }
+        button("Back", x + 24, y + 660 - 62, 1132, 46, B_CHEATS_BACK, 0, 0, 22);
     } else if (g_modal == M_CONFIG) {
         panel(760, 620, &x, &y);
         text("Conexão com o PC", x + 24, y + 18, 32, 0, rgba(236, 235, 227, 255), 0, 0, 1, NULL);
@@ -1006,6 +1193,37 @@ static void press_button(State *st, Btn *b)
     case B_LAYOUT: g_layout = !g_layout; cfg_save(); break;
     case B_EXIT: g_quit = 1; break;
     case B_DISCOVER: g_discover_now = 1; g_modal = M_NONE; break;
+    case B_CHEATS: g_modal = M_CHEATS; g_focus = -1; break;
+    case B_CHEATS_BACK: g_modal = M_CHEATS; g_focus = -1; break;
+    case B_CHEAT:
+        switch (b->arg) {
+        case CH_HEAL: cheat("heal", 0, 0); break;
+        case CH_HEAL_ASH: cheat("heal_ashley", 0, 0); break;
+        case CH_MAXHP: cheat("maxhp", 0, 0); break;
+        case CH_GOD: cheat("god", !st->god, 0); break;
+        case CH_INF: cheat("infammo", !st->infammo, 0); break;
+        case CH_REFILL: cheat("refill", 0, 0); break;
+        case CH_MONEY10: cheat("money", 10000, 0); break;
+        case CH_MONEY100: cheat("money", 100000, 0); break;
+        case CH_CASE: cheat("case", 0, 0); break;
+        }
+        break;
+    case B_GIVE_OPEN: g_modal = M_GIVE; g_focus = -1; catalog_load(); break;
+    case B_GIVE_CAT: g_give_cat = b->arg; g_give_page = 0; g_give_sel = -1; g_give_qty = 1; break;
+    case B_GIVE_PAGE: g_give_page += b->arg; if (g_give_page < 0) g_give_page = 0; break;
+    case B_GIVE_ITEM: g_give_sel = b->arg; g_give_qty = g_cat[b->arg].type == 1 ? 1 : (g_cat[b->arg].max > 1 ? g_cat[b->arg].max : 1); break;
+    case B_GIVE_QTY:
+        if (g_give_sel >= 0) {
+            int mx = g_cat[g_give_sel].max > 1 ? g_cat[g_give_sel].max : 1;
+            g_give_qty += b->arg;
+            if (g_give_qty < 1) g_give_qty = 1;
+            if (g_give_qty > mx) g_give_qty = mx;
+        }
+        break;
+    case B_GIVE_DO:
+        if (g_give_sel >= 0)
+            cheat("give", g_cat[g_give_sel].id, g_give_qty);
+        break;
     }
 }
 
@@ -1064,6 +1282,16 @@ static void begin_drag(State *st)
     g_sel = -1;
 }
 
+static int combo_of(State *st, int a, int b)
+{
+    for (int i = 0; i < st->ncombos; i++) {
+        unsigned short *c = st->combos[i];
+        if ((c[0] == a && c[1] == b) || (c[0] == b && c[1] == a))
+            return c[2];
+    }
+    return -1;
+}
+
 static void update_drag(State *st, float px, float py)
 {
     g_drag.px = px, g_drag.py = py;
@@ -1073,6 +1301,14 @@ static void update_drag(State *st, float px, float py)
     g_drag.cellx = (int)lroundf(g_drag.fx);
     g_drag.celly = (int)lroundf(g_drag.fy);
     g_drag.ok = fits(st, g_drag.slot, g_drag.cellx, g_drag.celly, g_drag.w, g_drag.h);
+    // dedo em cima de um item que combina com o arrastado (ex.: erva sobre erva) -> combinar
+    g_drag.combine = -1;
+    for (int i = 0; i < st->nitems; i++) {
+        Item *o = &st->items[i];
+        if (o->slot != g_drag.slot && u >= o->x && u < o->x + o->w && v >= o->y && v < o->y + o->h &&
+            combo_of(st, g_drag.it.id, o->id) >= 0)
+            g_drag.combine = o->slot;
+    }
 }
 
 static void rotate_drag(State *st)
@@ -1090,6 +1326,13 @@ static void rotate_drag(State *st)
 static void finish_drag(State *st)
 {
     Item *it = find_item(st, g_drag.slot);
+    if (it && g_drag.combine >= 0) {
+        char body[96];
+        snprintf(body, sizeof(body), "{\"slot\":%d,\"target\":%d}", it->slot, g_drag.combine);
+        post_action("/api/combine", body, "Combined!");
+        g_drag.on = 0;
+        return;
+    }
     if (it && g_drag.ok && (g_drag.cellx != it->x || g_drag.celly != it->y || g_drag.rot != it->rot)) {
         char body[128];
         snprintf(body, sizeof(body), "{\"slot\":%d,\"x\":%d,\"y\":%d,\"rot\":%d}", it->slot, g_drag.cellx,
@@ -1123,6 +1366,7 @@ static void handle_touch(State *st, HidTouchScreenState *ts, Finger *fing, int *
                 Item *it = &st->items[i];
                 if (u >= it->x && u < it->x + it->w && v >= it->y && v < it->y + it->h) {
                     g_drag = (Drag){0};
+                    g_drag.combine = -1;
                     g_drag.on = 1, g_drag.slot = it->slot, g_drag.rot = it->rot, g_drag.w = it->w,
                     g_drag.h = it->h;
                     g_drag.grabx = u - it->x, g_drag.graby = v - it->y, g_drag.fx = it->x, g_drag.fy = it->y;
@@ -1177,6 +1421,35 @@ static void handle_touch(State *st, HidTouchScreenState *ts, Finger *fing, int *
         }
     }
     *nf_prev = n;
+}
+
+// ===================================================================== easter egg: código Konami
+static void konami(u64 down)
+{
+    static const u64 seq[10] = {HidNpadButton_Up, HidNpadButton_Up, HidNpadButton_Down, HidNpadButton_Down,
+                                HidNpadButton_Left, HidNpadButton_Right, HidNpadButton_Left, HidNpadButton_Right,
+                                HidNpadButton_B, HidNpadButton_A};
+    static int pos = 0;
+    static u64 last = 0;
+    const u64 watch = HidNpadButton_Up | HidNpadButton_Down | HidNpadButton_Left | HidNpadButton_Right |
+                      HidNpadButton_A | HidNpadButton_B | HidNpadButton_X | HidNpadButton_Y;
+    u64 d = down & watch;
+    if (!d)
+        return;
+    u64 t = now_ms();
+    if (t - last > 2500)
+        pos = 0;
+    last = t;
+    if (d == seq[pos])
+        pos++;
+    else
+        pos = (d == seq[0]) ? 1 : 0;
+    if (pos == 10) {
+        pos = 0;
+        g_cheats = !g_cheats;
+        cfg_save();
+        toast(g_cheats ? "Cheats desbloqueados! (botão Cheats no topo)" : "Cheats escondidos");
+    }
 }
 
 // ===================================================================== controle → PC
@@ -1274,6 +1547,7 @@ int main(int argc, char **argv)
     while (appletMainLoop() && !g_quit) {
         padUpdate(&pad);
         u64 down = padGetButtonsDown(&pad);
+        konami(down);
 
         pthread_mutex_lock(&g_lock);
         *st = g_state;

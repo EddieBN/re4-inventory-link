@@ -43,6 +43,13 @@ Um servidor Python (só stdlib) lê/escreve a memória do jogo e serve uma pági
   vibração pedida pelo jogo em +0xE18, originais em +0xE20. `unhook` restaura a IAT.
 - O jogo chama GetState ~360x/s; teste confirmou o analógico chegando em `JOY.leftStick_X` (Joy em padrão
   `83 E0 10 33 C9 0B C1 0F 84 ? ? ? ? 0F BE 05 ? ? ? ?` → [+0x10] − 9).
+- Cheats (easter egg Konami no Switch): `game.cheat()`; modo deus e munição infinita rodam no stub por frame
+  (flags em +0x30/+0x34, alvo da munição em +0x38/+0x3C atualizado pelo poller). Dar item: `PutInCase(id, num, tamanho)`
+  (cdecl, padrão `0F B7 4E 1C 52 50 51 E8` +7) para itens de maleta, `cItemMgr::get(id, num)` (padrão
+  `56 50 B9 ? ? ? ? E8 ? ? ? ? A1` +7) para os demais. Comandos do stub: 5 = cdecl 3 args, 6 = ItemMgr thiscall 2 args.
+- Combinações: tabela do jogo `{u16 a, u16 b, u16 resultado}` ×75 (padrão `B8 ? ? ? ? 33 C9 66 3B 30 75 ? 66 3B 50 02 74` +1).
+  Armas com acessório (ex.: 36, 38, 50, 108) não têm peça em `piece_info` — combinação recusada por enquanto.
+- NÃO rodar `game.attach()` em outro processo com o servidor no ar: ao sair ele desfaz o hook do servidor.
 - Decisão do usuário: Switch = tela da maleta (mesmo visual da web) + controle; IP digitado no app.
 
 ## Hook

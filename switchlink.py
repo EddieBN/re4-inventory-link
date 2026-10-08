@@ -73,13 +73,16 @@ def _clean(s):
     return str(s).replace("\t", " ").replace("\n", " ")
 
 
-def text_state(st, version, icon_map):
+def text_state(st, version, icon_map, combos=None):
     """Estado da maleta no formato de texto lido pelo homebrew."""
     lines = [f"V\t{version}"]
     if not st.get("connected"):
         lines.append(f"E\t{_clean(st.get('error', 'Jogo não conectado'))}")
         return "\n".join(lines) + "\n"
     lines.append(f"S\t1\t{int(bool(st.get('running')))}\t{st['caseW']}\t{st['caseH']}\t{st['caseLevel']}")
+    vt = st.get("vitals", {})
+    lines.append(f"X\t{int(vt.get('god', False))}\t{int(vt.get('infAmmo', False))}\t{vt.get('hp', 0)}\t"
+                 f"{vt.get('hpMax', 0)}\t{vt.get('gold', 0)}")
     for it in st["items"]:
         if it["type"] == 1:
             count = "-" if it["id"] in (13, 56) else it.get("ammo", 0)
@@ -92,6 +95,8 @@ def text_state(st, version, icon_map):
              it["type"], it.get("ammo", 0), it.get("ammoMax") or 0, it.get("firepower", 0), it.get("firingSpeed", 0),
              it.get("reloadSpeed", 0), it.get("capacity", 0), it["num"], it["max"], icon.split("?")[0], _clean(it["name"])]
         lines.append("I\t" + "\t".join(str(x) for x in f))
+    for a, b, r in combos or []:
+        lines.append(f"C\t{a}\t{b}\t{r}")
     for o in st["others"]:
         lines.append(f"O\t{o['slot']}\t{o['type']}\t{o['num']}\t{_clean(o['name'])}")
     return "\n".join(lines) + "\n"

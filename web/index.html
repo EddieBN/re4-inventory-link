@@ -39,6 +39,7 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:var(
 .eq{position:absolute;left:18px;top:4px;font:italic bold 62px/1 var(--serif);color:#efefe8;text-shadow:0 0 4px #000,2px 2px 2px #000,-1px -1px 2px #000}
 .sel{position:absolute;inset:0;background:var(--hi);mix-blend-mode:screen}
 .ghost{position:absolute;left:0;top:0;transform-origin:0 0;border:6px solid rgba(110,230,120,.85);background:rgba(110,230,120,.15)}
+.ghost.combo{border-color:rgba(232,205,110,.95);background:rgba(232,205,110,.22)}
 .ghost.bad{border-color:rgba(235,80,70,.9);background:rgba(235,80,70,.18)}
 .banner{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(10px + env(safe-area-inset-bottom));z-index:15;max-width:94vw;
   padding:8px 14px;background:rgba(0,0,0,.8);border:1px solid #57554a;font:italic 16px var(--serif);color:#e6dfb0;text-align:center}
@@ -86,7 +87,7 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:var(
 // ======================================================================
 //  Estado
 // ======================================================================
-let S=null, ICONS={};
+let S=null, ICONS={}, COMBOS=[];
 let sel=null, menu=null, drag=null, modal=null;
 const PX=96;               // pixels por célula no sistema local de cada item
 const SYN=96;              // tamanho da célula na maleta desenhada
@@ -113,6 +114,8 @@ function geometry(){
 // ======================================================================
 //  Render
 // ======================================================================
+async function loadCombos(){ try{ COMBOS=await (await fetch('/api/combos')).json(); }catch(e){} }
+const comboOf=(a,b)=>{ for(const [x,y,r] of COMBOS) if((x===a&&y===b)||(x===b&&y===a)) return r; return null; };
 async function loadIcons(){
   try{ ICONS=await (await fetch('/api/icons')).json(); if(S) render(); }catch(e){}
 }
@@ -142,7 +145,9 @@ function render(){
   for(const it of S.items){ if(drag&&drag.slot===it.slot) continue; h+=itemHTML(it,it.x,it.y,it.rot,it.w,it.h); }
   if(drag&&drag.active){
     const d=drag;
-    if(d.cell) h+=`<div class="ghost ${d.ok?'':'bad'}" style="width:${d.w*PX}px;height:${d.h*PX}px;transform:${css(mul(G.M,cellT(d.cell[0],d.cell[1])))}"></div>`;
+    const tg=d.combine!==undefined&&d.combine!==null?S.items.find(i=>i.slot===d.combine):null;
+    if(tg) h+=`<div class="ghost combo" style="width:${tg.w*PX}px;height:${tg.h*PX}px;transform:${css(mul(G.M,cellT(tg.x,tg.y)))}"></div>`;
+    else if(d.cell) h+=`<div class="ghost ${d.ok?'':'bad'}" style="width:${d.w*PX}px;height:${d.h*PX}px;transform:${css(mul(G.M,cellT(d.cell[0],d.cell[1])))}"></div>`;
     h+=itemHTML(d.it,d.fx,d.fy,d.rot,d.w,d.h,true);
   }
   h+='</div>';
@@ -321,6 +326,9 @@ function updateDrag(c){
   drag.fx=c[0]-drag.grab[0]; drag.fy=c[1]-drag.grab[1];
   const x=Math.round(drag.fx), y=Math.round(drag.fy);
   drag.cell=[x,y]; drag.ok=fits(occupied(drag.slot),x,y,drag.w,drag.h);
+  // em cima de um item que combina com o arrastado (ex.: erva sobre erva) -> combinar
+  const t=itemAtCell(c[0],c[1]);
+  drag.combine=(t&&t.slot!==drag.slot&&comboOf(drag.it.id,t.id)!==null)?t.slot:null;
 }
 function rotateDrag(){
   drag.rot=drag.rot^1; [drag.w,drag.h]=[drag.h,drag.w];
@@ -331,6 +339,11 @@ function rotateDrag(){
 }
 async function finishDrag(){
   const d=drag; drag=null;
+  if(d.combine!==null&&d.combine!==undefined){
+    try{ const j=await api('/api/combine',{slot:d.slot,target:d.combine}); toast('Combined: '+j.name); buzz(30); }
+    catch(err){ toast(err.message); }
+    render(); return;
+  }
   if(d.cell&&d.ok&&(d.cell[0]!==d.it.x||d.cell[1]!==d.it.y||d.rot!==d.it.rot)){
     try{ await api('/api/move',{slot:d.slot,x:d.cell[0],y:d.cell[1],rot:d.rot}); buzz(); }catch(err){ toast(err.message); }
   }
@@ -365,6 +378,7 @@ addEventListener('resize',()=>{ if(S) render(); });
 addEventListener('focus',loadIcons);
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden) loadIcons(); });
 loadIcons();
+loadCombos();
 connect();
 </script>
 </body>
