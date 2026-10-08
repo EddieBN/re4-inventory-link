@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from game import Game
 import icons
+import switchlink
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 game = Game()
@@ -92,6 +93,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, snapshot["json"])
         if path == "/api/events":
             return self._events()
+        if path == "/api/switch/state":
+            return self._switch_state()
         self._send(404, '{"error":"not found"}')
 
     TYPES = {".png": "image/png", ".webp": "image/webp", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
@@ -111,6 +114,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "max-age=31536000, immutable")  # URL leva ?v=versão
         self.end_headers()
         self.wfile.write(data)
+
+    def _switch_state(self):
+        """Long-poll: responde quando a versão muda (ou após 8 s). ?v=<última versão vista>."""
+        from urllib.parse import parse_qs, urlparse
+        q = parse_qs(urlparse(self.path).query)
+        seen = int(q.get("v", ["-1"])[0])
+        with cond:
+            if snapshot["version"] == seen:
+                cond.wait(timeout=8)
+            ver, js = snapshot["version"], snapshot["json"]
+        body = switchlink.text_state(json.loads(js), ver, icons.icons())
+        self._send(200, body, "text/plain; charset=utf-8")
 
     def _events(self):
         self.send_response(200)
@@ -200,6 +215,7 @@ def main():
 
     atexit.register(game.unhook)
     threading.Thread(target=poller, daemon=True).start()
+    threading.Thread(target=switchlink.PadReceiver(game).run, daemon=True).start()
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
@@ -210,6 +226,7 @@ def main():
     for ip in lan_ips():
         print(f"   http://{ip}:{args.port}")
     print(f"   (neste PC: http://localhost:{args.port})")
+    print(f" Switch: abra o RE4 Inventory e digite o IP acima (controle via UDP {switchlink.PAD_PORT})")
     print(" Ctrl+C para sair (o hook é removido do jogo).")
     print("=" * 56)
     try:

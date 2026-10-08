@@ -40,6 +40,14 @@ CODE_OFF = 0x900
 MAGIC = b"RE4M"
 CMD_ARM, CMD_ITEMINFO, CMD_CALL2, CMD_MGR_CALL = 1, 2, 3, 4
 N_ITEM_IDS = 0x110
+# Controle virtual (XInput): estado injetado + originais das importações + código dos stubs
+D_PAD_ACTIVE, D_PAD_STATE, D_PAD_CALLS, D_RUMBLE = 0xE00, 0xE04, 0xE14, 0xE18
+D_XI_ORIG = 0xE20            # 3 ponteiros: GetState, SetState, GetCapabilities
+XI_CODE_OFF = 0xE40
+XI_ORDINALS = {"get": 2, "set": 3, "caps": 4}   # XINPUT1_3.dll
+# botões XInput (wButtons)
+XI = {"up": 0x1, "down": 0x2, "left": 0x4, "right": 0x8, "start": 0x10, "back": 0x20, "ls": 0x40, "rs": 0x80,
+      "lb": 0x100, "rb": 0x200, "a": 0x1000, "b": 0x2000, "x": 0x4000, "y": 0x8000}
 
 ntdll = ctypes.WinDLL("ntdll")
 
@@ -174,6 +182,121 @@ class Game:
         p.write(d, MAGIC + struct.pack("<I", orig) + b"\0" * (0x40 - 8))
         p.write(d + CODE_OFF, self._build_stub(d), code=True)
         self._write_jmp(d + CODE_OFF)
+        self._install_xinput()
+
+    # ------------------------------------------------------- controle virtual
+    def _iat_slots(self, dll_name, ordinals):
+        """Endereços das entradas da IAT (na memória) das importações por ordinal de uma DLL."""
+        p, b = self.p, self.p.base
+        pe = b + p.u32(b + 0x3C)
+        imp = p.u32(pe + 24 + 96 + 8)
+        out = {}
+        o = b + imp
+        while True:
+            oft, _, _, name, ft = struct.unpack("<IIIII", p.read(o, 20))
+            if not name:
+                break
+            dll = p.read(b + name, 64).split(b"\0")[0].decode(errors="replace")
+            if dll.lower() == dll_name.lower():
+                i = 0
+                while True:
+                    e = p.u32(b + (oft or ft) + i * 4)
+                    if not e:
+                        break
+                    if e & 0x80000000 and (e & 0xFFFF) in ordinals:
+                        out[e & 0xFFFF] = b + ft + i * 4
+                    i += 1
+            o += 20
+        return out
+
+    def _install_xinput(self):
+        p, d = self.p, self.data
+        slots = self._iat_slots("XINPUT1_3.dll", set(XI_ORDINALS.values()))
+        if len(slots) != 3:
+            self.xi_slots = None
+            print("[pad] importações do XInput não encontradas — controle remoto desativado")
+            return
+        self.xi_slots = []
+        origs = []
+        for k, (name, ordn) in enumerate(XI_ORDINALS.items()):
+            slot = slots[ordn]
+            cur = p.u32(slot)
+            orig = p.u32(d + D_XI_ORIG + 4 * k) if d <= cur < d + 0x1000 else cur
+            origs.append(orig)
+            self.xi_slots.append((slot, orig))
+        p.write(d + D_PAD_ACTIVE, b"\0" * 0x20)
+        p.write(d + D_XI_ORIG, struct.pack("<III", *origs))
+        code, entries = self._build_xinput_stubs(d)
+        p.write(d + XI_CODE_OFF, code, code=True)
+        for (slot, _), entry in zip(self.xi_slots, entries):
+            p.write(slot, struct.pack("<I", entry), code=True)
+        self.pad_packet = 0
+
+    def _build_xinput_stubs(self, d):
+        a = Asm(d + XI_CODE_OFF)
+        A = lambda off: d + off
+        entries = []
+        # XInputGetState(DWORD idx, XINPUT_STATE* st)  — stdcall
+        entries.append(a.here())
+        a.raw(0xFF, 0x05); a.u32(A(D_PAD_CALLS))                # inc [calls]
+        a.raw(0x83, 0x7C, 0x24, 0x04, 0x00)                      # cmp dword [esp+4],0
+        a.raw(0x0F, 0x85); a.rel32_label("g_orig")
+        a.raw(0x83, 0x3D); a.u32(A(D_PAD_ACTIVE)); a.raw(0x00)   # cmp dword [active],0
+        a.raw(0x0F, 0x84); a.rel32_label("g_orig")
+        a.raw(0x8B, 0x54, 0x24, 0x08)                            # mov edx,[esp+8]
+        for k in range(4):                                       # copia 16 bytes
+            a.raw(0xA1); a.u32(A(D_PAD_STATE + 4 * k))           # mov eax,[state+k]
+            a.raw(0x89, 0x42, 4 * k)                             # mov [edx+k],eax
+        a.raw(0x31, 0xC0, 0xC2, 0x08, 0x00)                      # xor eax,eax ; ret 8
+        a.label("g_orig")
+        a.raw(0xFF, 0x25); a.u32(A(D_XI_ORIG))                  # jmp [orig GetState]
+        # XInputSetState(DWORD idx, XINPUT_VIBRATION* v)  — guarda a vibração
+        entries.append(a.here())
+        a.raw(0x83, 0x7C, 0x24, 0x04, 0x00)
+        a.raw(0x0F, 0x85); a.rel32_label("s_orig")
+        a.raw(0x83, 0x3D); a.u32(A(D_PAD_ACTIVE)); a.raw(0x00)
+        a.raw(0x0F, 0x84); a.rel32_label("s_orig")
+        a.raw(0x8B, 0x54, 0x24, 0x08)                            # mov edx,[esp+8]
+        a.raw(0x8B, 0x02)                                        # mov eax,[edx]
+        a.raw(0xA3); a.u32(A(D_RUMBLE))                          # mov [rumble],eax
+        a.raw(0x31, 0xC0, 0xC2, 0x08, 0x00)
+        a.label("s_orig")
+        a.raw(0xFF, 0x25); a.u32(A(D_XI_ORIG + 4))
+        # XInputGetCapabilities(DWORD idx, DWORD flags, XINPUT_CAPABILITIES* c)
+        entries.append(a.here())
+        a.raw(0x83, 0x7C, 0x24, 0x04, 0x00)
+        a.raw(0x0F, 0x85); a.rel32_label("c_orig")
+        a.raw(0x83, 0x3D); a.u32(A(D_PAD_ACTIVE)); a.raw(0x00)
+        a.raw(0x0F, 0x84); a.rel32_label("c_orig")
+        a.raw(0x8B, 0x54, 0x24, 0x0C)                            # mov edx,[esp+12]
+        for k, v in enumerate((0x00000101, 0xFFFFF3FF, 0x7FC07FC0, 0x7FC07FC0, 0xFFFFFFFF)):
+            a.raw(0xC7, 0x42, 4 * k); a.u32(v)                   # mov dword [edx+k],imm
+        a.raw(0x31, 0xC0, 0xC2, 0x0C, 0x00)                      # xor eax,eax ; ret 12
+        a.label("c_orig")
+        a.raw(0xFF, 0x25); a.u32(A(D_XI_ORIG + 8))
+        return a.done(), entries
+
+    def set_pad(self, buttons, lt, rt, lx, ly, rx, ry):
+        """Controle virtual no slot 0 do XInput (o RE4 o enxerga como um controle Xbox)."""
+        if not getattr(self, "xi_slots", None):
+            return
+        self.pad_packet = (self.pad_packet + 1) & 0xFFFFFFFF
+        st = struct.pack("<IHBBhhhh", self.pad_packet, buttons & 0xFFFF, lt, rt, lx, ly, rx, ry)
+        self.p.write(self.data + D_PAD_STATE, st)
+        self.p.w32(self.data + D_PAD_ACTIVE, 1)
+
+    def release_pad(self):
+        if getattr(self, "xi_slots", None) and self.data:
+            try:
+                self.p.w32(self.data + D_PAD_ACTIVE, 0)
+            except OSError:
+                pass
+
+    def rumble(self):
+        try:
+            return struct.unpack("<HH", self.p.read(self.data + D_RUMBLE, 4))
+        except (OSError, TypeError):
+            return (0, 0)
 
     def _write_jmp(self, target):
         rel = struct.pack("<i", target - (self.sched_thunk + 5))
@@ -187,6 +310,9 @@ class Game:
         with self.lock:
             if self.p and self.p.alive() and self.data:
                 try:
+                    self.p.w32(self.data + D_PAD_ACTIVE, 0)
+                    for slot, orig in getattr(self, "xi_slots", None) or []:
+                        self.p.write(slot, struct.pack("<I", orig), code=True)
                     self._write_jmp(self.orig_sched)
                 except OSError:
                     pass

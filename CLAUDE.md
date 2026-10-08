@@ -11,6 +11,10 @@ Um servidor Python (só stdlib) lê/escreve a memória do jogo e serve uma pági
 - `server.py` — HTTP + SSE (`/api/events`), API POST (`/api/equip|use|discard|move|count|ammo`), `/api/icons`.
 - `icons.py` — lista `web/icons/` (ícones do usuário; fora do git por serem da Capcom).
 - `item_names.py` — nomes dos 273 IDs (gerado a partir do re4_tweaks).
+- `switchlink.py` — UDP 8045 (pacote `RE4P` 20 bytes → `game.set_pad`, resposta `RE4R` com vibração; watchdog 0,4 s)
+  e `/api/switch/state?v=N` (texto, long-poll 8 s; linhas `V`, `S`, `I`, `O`, `E` separadas por TAB).
+- `switch/` — homebrew `.nro` (libnx + SDL2/SDL2_ttf/SDL2_image; fonte compartilhada do sistema). Build:
+  MSYS2 do devkitPro em `C:\devkitPro\msys64` → `cd /d/RE4/switch && make`. Config no SD: `sdmc:/switch/re4inv/config.txt`.
 - `web/index.html` — interface (maleta desenhada, menu Equip/Use/Examine/Discard, arrastar, girar com 2 dedos).
 
 ## Decisões do usuário (não reverter sem perguntar)
@@ -32,6 +36,14 @@ Um servidor Python (só stdlib) lê/escreve a memória do jogo e serve uma pági
 - `GLOBAL_WK` (ponteiro via `A1 ? ? ? ? B9 FF FF FF 7F 21 48 ? A1` +1): `+0x4FA8 dinheiro`, `+0x4FB4/0x4FB6 vida/vida máx. Leon (int16)`, `+0x4FB8/0x4FBA Ashley`.
 - Funções chamadas pelo stub: `cItemMgr::arm` (thiscall, ret 4) + `WeaponChange` (cdecl), `cItemMgr::use` (0x466c90: cura, erva amarela aumenta vida máx., usa m_to_whom),
   `cItemMgr::erase` (descartar), `itemInfo(id, ITEM_INFO*)` (tipo/limite dependem da dificuldade), `WeaponId2ChargeNum(id, nível)`.
+
+## Controle remoto (XInput)
+- `bio4.exe` importa por ordinal da `XINPUT1_3.dll`: #2 GetState, #3 SetState, #4 GetCapabilities (IAT achada lendo o PE na memória).
+- Stubs no bloco injetado (+0xE40) respondem pelo slot 0 quando `active` (+0xE00) = 1; estado XINPUT_STATE em +0xE04,
+  vibração pedida pelo jogo em +0xE18, originais em +0xE20. `unhook` restaura a IAT.
+- O jogo chama GetState ~360x/s; teste confirmou o analógico chegando em `JOY.leftStick_X` (Joy em padrão
+  `83 E0 10 33 C9 0B C1 0F 84 ? ? ? ? 0F BE 05 ? ? ? ?` → [+0x10] − 9).
+- Decisão do usuário: Switch = tela da maleta (mesmo visual da web) + controle; IP digitado no app.
 
 ## Hook
 - Stub x86 alocado no processo, inserido trocando o destino do *thunk* `jmp cSceSys::scheduler`

@@ -20,6 +20,25 @@ mostrando a maleta do jogo.
   - PC: botão direito, roda do mouse ou tecla **R** durante o arraste.
 - *Examine* mostra munição e melhorias; *Ajustes…* edita munição/quantidade.
 
+## Nintendo Switch (homebrew)
+O Switch vira **controle do jogo + tela da maleta** (como um Wii U GamePad): o PC mostra o jogo e o Switch mostra
+a mesma maleta da página web; os Joy-Cons/Pro Controller controlam o Leon.
+
+1. Copie `switch/re4inv.nro` para `SD:/switch/re4inv.nro` (ou envie pela rede: no hbmenu aperte **Y** e rode
+   `nxlink -a <ip-do-switch> switch/re4inv.nro` no MSYS2 do devkitPro).
+2. Abra o **RE4 Inventory** pelo hbmenu (de preferência segurando **R** ao abrir um jogo, para ter memória cheia).
+3. Na primeira vez abre a tela **Config.**: digite o IP do PC (o mesmo do console do `iniciar.bat`) e toque em
+   **Conectar**. Fica salvo em `sdmc:/switch/re4inv/config.txt`.
+- Toque na tela: menu Equip / Use / Examine / Discard; segure e arraste para mover; gire com dois dedos.
+- Botões: **Config.** permite trocar o layout — *posição Xbox* (o botão de baixo é o A do jogo) ou
+  *rótulos Nintendo* (A = A). Com um painel aberto, os botões navegam o painel e o Leon fica parado.
+- A vibração do jogo é repassada aos Joy-Cons. Se o Switch desconectar, o controle virtual é solto em 0,4 s.
+- O PC precisa ficar com a janela do RE4 em foco (o jogo pausa sem foco).
+
+### Compilar o homebrew
+Requer o devkitPro (instalado em `C:\devkitPro\msys64`, pacotes `switch-dev switch-sdl2 switch-sdl2_ttf
+switch-sdl2_image`). No MSYS2 do devkitPro: `cd /d/RE4/switch && make`.
+
 ## Ícones
 - `web/icons/`: um arquivo por item, nomeado pelo ID (`35.png`), pelo nome interno (`Shotgun.png`) ou pelo nome
   exibido; vista de cima na orientação padrão. Sem ícone, o item aparece como um bloco com o nome.
@@ -31,8 +50,12 @@ mostrando a maleta do jogo.
   `GLOBAL_WK`) e injeta um stub x86 na chamada de `cSceSys::scheduler`, que roda a cada frame na thread
   principal. O stub chama as funções do próprio jogo: `cItemMgr::arm` + `WeaponChange` (trocar arma),
   `cItemMgr::use` (curar — ervas, spray, ovos, peixe, inclusive aumento de vida máxima), `cItemMgr::erase`
-  (descartar), `itemInfo` e `WeaponId2ChargeNum`.
+  (descartar), `itemInfo` e `WeaponId2ChargeNum`. O controle remoto entra desviando as importações
+  `XInputGetState/SetState/GetCapabilities` do jogo: o RE4 enxerga um controle Xbox no slot 1.
 - `icons.py` — lista os ícones de `web/icons/`.
+- `switchlink.py` — ponte com o Switch: recebe o controle por UDP (porta 8045) e serve o estado da maleta em texto
+  (`/api/switch/state`, long-poll).
+- `switch/` — homebrew do Switch (C, libnx + SDL2).
 - `server.py` — servidor HTTP (stdlib), API JSON e SSE. `web/index.html` — interface.
 
 ## Observações

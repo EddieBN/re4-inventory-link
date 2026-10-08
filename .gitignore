@@ -3,3 +3,8 @@ __pycache__/
 # imagens do jogo (Capcom): ficam só na sua máquina
 web/icons/*
 !web/icons/LEIA-ME.txt
+switch/build/
+switch/*.elf
+switch/*.nacp
+switch/*.nro
+switch/*.map
